@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # A library that provides a Python interface to the Telegram Bot API
-# Copyright (C) 2015-2024
+# Copyright (C) 2015-2026
 # Leandro Toledo de Souza <devs@python-telegram-bot.org>
 #
 # This program is free software: you can redistribute it and/or modify
@@ -20,12 +20,13 @@
 match the official API. It also checks if the type annotations are correct and if the parameters
 are required or not."""
 
+import datetime as dtm
 import inspect
 import logging
 import re
-from datetime import datetime
+from collections.abc import Sequence
 from types import FunctionType
-from typing import Any, Sequence
+from typing import Any
 
 from telegram._utils.defaultvalue import DefaultValue
 from telegram._utils.types import FileInput, ODVInput
@@ -37,6 +38,7 @@ from tests.test_official.helpers import (
     _get_params_base,
     _unionizer,
     cached_type_hints,
+    extract_mappings,
     resolve_forward_refs_in_type,
     wrap_with_none,
 )
@@ -66,6 +68,7 @@ DATETIME_REGEX = re.compile(
     """,
     re.VERBOSE,
 )
+TIMEDELTA_REGEX = re.compile(r"((in|number of) seconds)|(\w+_period$)")
 
 log = logging.debug
 
@@ -123,9 +126,9 @@ def check_param_type(
     assert len(mapped) <= 1, f"More than one match found for {tg_param_type}"
 
     # it may be a list of objects, so let's extract them using _extract_words:
-    mapped_type = _unionizer(_extract_words(tg_param_type)) if not mapped else mapped.pop()
+    org_mapped_type = _unionizer(_extract_words(tg_param_type)) if not mapped else mapped.pop()
     # If the parameter is not required by TG, `None` should be added to `mapped_type`
-    mapped_type = wrap_with_none(tg_parameter, mapped_type, obj)
+    mapped_type = wrap_with_none(tg_parameter, org_mapped_type, obj)
 
     log(
         "At the end of PRE-PROCESSING, the values of variables are:\n"
@@ -142,14 +145,17 @@ def check_param_type(
     )
 
     # CHECKING:
-    # Each branch manipulates the `mapped_type` (except for 4) ) to match the `ptb_annotation`.
+    # Each branch manipulates the `mapped_type` (except for 5) ) to match the `ptb_annotation`.
 
     # 1) HANDLING ARRAY TYPES:
     # Now let's do the checking, starting with "Array of ..." types.
     if "Array of " in tg_param_type:
         # For exceptions just check if they contain the annotation
-        if ptb_param.name in PTCE.ARRAY_OF_EXCEPTIONS:
-            return PTCE.ARRAY_OF_EXCEPTIONS[ptb_param.name] in str(ptb_annotation), Sequence
+        if any(ptb_param.name in key for key in PTCE.ARRAY_OF_EXCEPTIONS):
+            for (p_name, is_expected_class), exception_type in PTCE.ARRAY_OF_EXCEPTIONS.items():
+                if ptb_param.name == p_name and is_class is is_expected_class:
+                    log("Checking that `%s` is an exception!\n", ptb_param.name)
+                    return exception_type in str(ptb_annotation), Sequence
 
         obj_match: re.Match | None = re.search(ARRAY_OF_PATTERN, tg_param_type)
         if obj_match is None:
@@ -169,9 +175,11 @@ def check_param_type(
 
     # 2) HANDLING OTHER TYPES:
     # Special case for send_* methods where we accept more types than the official API:
-    elif ptb_param.name in PTCE.ADDITIONAL_TYPES and obj.__name__.startswith("send"):
-        log("Checking that `%s` has an additional argument!\n", ptb_param.name)
-        mapped_type = mapped_type | PTCE.ADDITIONAL_TYPES[ptb_param.name]
+    elif additional_types := extract_mappings(PTCE.ADDITIONAL_TYPES, obj, ptb_param.name):
+        log("Checking that `%s` accepts additional types for some parameters!\n", obj.__name__)
+        for at in additional_types:
+            log("Checking that `%s` is an additional type for `%s`!\n", at, ptb_param.name)
+            mapped_type = mapped_type | at
 
     # 3) HANDLING DATETIMES:
     elif (
@@ -182,24 +190,29 @@ def check_param_type(
         or "Unix time" in tg_parameter.param_description
     ):
         log("Checking that `%s` is a datetime!\n", ptb_param.name)
-        if ptb_param.name in PTCE.DATETIME_EXCEPTIONS:
-            return True, mapped_type
         # If it's a class, we only accept datetime as the parameter
-        mapped_type = datetime if is_class else mapped_type | datetime
+        mapped_type = dtm.datetime if is_class else mapped_type | dtm.datetime
 
-    # 4) COMPLEX TYPES:
+    # 4) HANDLING TIMEDELTA:
+    elif re.search(TIMEDELTA_REGEX, tg_parameter.param_description) or re.search(
+        TIMEDELTA_REGEX, ptb_param.name
+    ):
+        log("Checking that `%s` is a timedelta!\n", ptb_param.name)
+        mapped_type = mapped_type | dtm.timedelta
+
+    # 5) COMPLEX TYPES:
     # Some types are too complicated, so we replace our annotation with a simpler type:
-    elif any(ptb_param.name in key for key in PTCE.COMPLEX_TYPES):
+    elif overrides := extract_mappings(PTCE.COMPLEX_TYPES, obj, ptb_param.name):
+        exception_type = overrides[0]
         log("Converting `%s` to a simpler type!\n", ptb_param.name)
-        for (param_name, is_expected_class), exception_type in PTCE.COMPLEX_TYPES.items():
-            if ptb_param.name == param_name and is_class is is_expected_class:
-                ptb_annotation = wrap_with_none(tg_parameter, exception_type, obj)
+        ptb_annotation = wrap_with_none(tg_parameter, exception_type, obj)
 
-    # 5) HANDLING DEFAULTS PARAMETERS:
+    # 6) HANDLING DEFAULTS PARAMETERS:
     # Classes whose parameters are all ODVInput should be converted and checked.
     elif obj.__name__ in PTCE.IGNORED_DEFAULTS_CLASSES:
         log("Checking that `%s`'s param is ODVInput:\n", obj.__name__)
-        mapped_type = ODVInput[mapped_type]
+        # We have to use org_mapped_type here, because ODVInput will not take a None value as well
+        mapped_type = ODVInput[org_mapped_type]
     elif not (
         # Defaults checking should not be done for:
         # 1. Parameters that have name conflict with `Defaults.name`
@@ -211,7 +224,8 @@ def check_param_type(
         for name, _ in ALL_DEFAULTS:
             if name == ptb_param.name or "parse_mode" in ptb_param.name:
                 log("Checking that `%s` is a Defaults parameter!\n", ptb_param.name)
-                mapped_type = ODVInput[mapped_type]
+                # We have to use org_mapped_type here, because ODVInput will not take a None value
+                mapped_type = ODVInput[org_mapped_type]
                 break
 
     # RESULTS:-

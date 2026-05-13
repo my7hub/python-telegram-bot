@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # A library that provides a Python interface to the Telegram Bot API
-# Copyright (C) 2015-2024
+# Copyright (C) 2015-2026
 # Leandro Toledo de Souza <devs@python-telegram-bot.org>
 #
 # This program is free software: you can redistribute it and/or modify
@@ -23,6 +23,7 @@ from telegram import (
     KeyboardButton,
     KeyboardButtonPollType,
     KeyboardButtonRequestChat,
+    KeyboardButtonRequestManagedBot,
     KeyboardButtonRequestUsers,
     WebAppInfo,
 )
@@ -32,17 +33,20 @@ from tests.auxil.slots import mro_slots
 @pytest.fixture(scope="module")
 def keyboard_button():
     return KeyboardButton(
-        TestKeyboardButtonBase.text,
-        request_location=TestKeyboardButtonBase.request_location,
-        request_contact=TestKeyboardButtonBase.request_contact,
-        request_poll=TestKeyboardButtonBase.request_poll,
-        web_app=TestKeyboardButtonBase.web_app,
-        request_chat=TestKeyboardButtonBase.request_chat,
-        request_users=TestKeyboardButtonBase.request_users,
+        KeyboardButtonTestBase.text,
+        request_location=KeyboardButtonTestBase.request_location,
+        request_contact=KeyboardButtonTestBase.request_contact,
+        request_poll=KeyboardButtonTestBase.request_poll,
+        web_app=KeyboardButtonTestBase.web_app,
+        request_chat=KeyboardButtonTestBase.request_chat,
+        request_users=KeyboardButtonTestBase.request_users,
+        style=KeyboardButtonTestBase.style,
+        icon_custom_emoji_id=KeyboardButtonTestBase.icon_custom_emoji_id,
+        request_managed_bot=KeyboardButtonTestBase.request_managed_bot,
     )
 
 
-class TestKeyboardButtonBase:
+class KeyboardButtonTestBase:
     text = "text"
     request_location = True
     request_contact = True
@@ -50,9 +54,12 @@ class TestKeyboardButtonBase:
     web_app = WebAppInfo(url="https://example.com")
     request_chat = KeyboardButtonRequestChat(1, True)
     request_users = KeyboardButtonRequestUsers(2)
+    style = "primary"
+    icon_custom_emoji_id = "5237829955978547322"
+    request_managed_bot = KeyboardButtonRequestManagedBot(4, "suggested_name", "username")
 
 
-class TestKeyboardButtonWithoutRequest(TestKeyboardButtonBase):
+class TestKeyboardButtonWithoutRequest(KeyboardButtonTestBase):
     def test_slot_behaviour(self, keyboard_button):
         inst = keyboard_button
         for attr in inst.__slots__:
@@ -67,6 +74,9 @@ class TestKeyboardButtonWithoutRequest(TestKeyboardButtonBase):
         assert keyboard_button.web_app == self.web_app
         assert keyboard_button.request_chat == self.request_chat
         assert keyboard_button.request_users == self.request_users
+        assert keyboard_button.style == self.style
+        assert keyboard_button.icon_custom_emoji_id == self.icon_custom_emoji_id
+        assert keyboard_button.request_managed_bot == self.request_managed_bot
 
     def test_to_dict(self, keyboard_button):
         keyboard_button_dict = keyboard_button.to_dict()
@@ -79,9 +89,15 @@ class TestKeyboardButtonWithoutRequest(TestKeyboardButtonBase):
         assert keyboard_button_dict["web_app"] == keyboard_button.web_app.to_dict()
         assert keyboard_button_dict["request_chat"] == keyboard_button.request_chat.to_dict()
         assert keyboard_button_dict["request_users"] == keyboard_button.request_users.to_dict()
+        assert keyboard_button_dict["style"] == keyboard_button.style
+        assert keyboard_button_dict["icon_custom_emoji_id"] == keyboard_button.icon_custom_emoji_id
+        assert (
+            keyboard_button_dict["request_managed_bot"]
+            == keyboard_button.request_managed_bot.to_dict()
+        )
 
     @pytest.mark.parametrize("request_user", [True, False])
-    def test_de_json(self, bot, request_user):
+    def test_de_json(self, request_user):
         json_dict = {
             "text": self.text,
             "request_location": self.request_location,
@@ -90,6 +106,9 @@ class TestKeyboardButtonWithoutRequest(TestKeyboardButtonBase):
             "web_app": self.web_app.to_dict(),
             "request_chat": self.request_chat.to_dict(),
             "request_users": self.request_users.to_dict(),
+            "style": self.style,
+            "icon_custom_emoji_id": self.icon_custom_emoji_id,
+            "request_managed_bot": self.request_managed_bot.to_dict(),
         }
         if request_user:
             json_dict["request_user"] = {"request_id": 2}
@@ -107,9 +126,9 @@ class TestKeyboardButtonWithoutRequest(TestKeyboardButtonBase):
         assert keyboard_button.web_app == self.web_app
         assert keyboard_button.request_chat == self.request_chat
         assert keyboard_button.request_users == self.request_users
-
-        none = KeyboardButton.de_json({}, None)
-        assert none is None
+        assert keyboard_button.style == self.style
+        assert keyboard_button.icon_custom_emoji_id == self.icon_custom_emoji_id
+        assert keyboard_button.request_managed_bot == self.request_managed_bot
 
     def test_equality(self):
         a = KeyboardButton("test", request_contact=True)
@@ -117,18 +136,23 @@ class TestKeyboardButtonWithoutRequest(TestKeyboardButtonBase):
         c = KeyboardButton("Test", request_location=True)
         d = KeyboardButton("Test", web_app=WebAppInfo(url="https://ptb.org"))
         e = InlineKeyboardButton("test", callback_data="test")
+        h = KeyboardButton("test", request_contact=True, icon_custom_emoji_id="Custom123")
         f = KeyboardButton(
             "test",
             request_contact=True,
             request_chat=KeyboardButtonRequestChat(1, False),
             request_users=KeyboardButtonRequestUsers(2),
+            icon_custom_emoji_id="Custom123",
         )
         g = KeyboardButton(
             "test",
             request_contact=True,
             request_chat=KeyboardButtonRequestChat(1, False),
             request_users=KeyboardButtonRequestUsers(2),
+            icon_custom_emoji_id="Custom123",
         )
+        h = KeyboardButton("test", request_contact=True, style="primary")
+        i = KeyboardButton("test", request_contact=True, icon_custom_emoji_id="123")
 
         assert a == b
         assert hash(a) == hash(b)
@@ -145,5 +169,14 @@ class TestKeyboardButtonWithoutRequest(TestKeyboardButtonBase):
         assert a != f
         assert hash(a) != hash(f)
 
+        assert a != h
+        assert hash(a) != hash(f)
+
         assert f == g
         assert hash(f) == hash(g)
+
+        assert a != h
+        assert hash(a) != hash(h)
+
+        assert h != i
+        assert hash(h) != hash(i)

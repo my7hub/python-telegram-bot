@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # A library that provides a Python interface to the Telegram Bot API
-# Copyright (C) 2015-2024
+# Copyright (C) 2015-2026
 # Leandro Toledo de Souza <devs@python-telegram-bot.org>
 #
 # This program is free software: you can redistribute it and/or modify
@@ -20,7 +20,8 @@
 
 import functools
 import re
-from typing import TYPE_CHECKING, Any, Sequence, _eval_type, get_type_hints
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any, TypeVar, _eval_type, get_type_hints
 
 from bs4 import PageElement, Tag
 
@@ -92,7 +93,7 @@ def is_parameter_required_by_tg(field: str) -> bool:
 def wrap_with_none(tg_parameter: "TelegramParameter", mapped_type: Any, obj: object) -> type:
     """Adds `None` to type annotation if the parameter isn't required. Respects ignored params."""
     # have to import here to avoid circular imports
-    from tests.test_official.exceptions import ignored_param_requirements
+    from tests.test_official.exceptions import ignored_param_requirements  # noqa: PLC0415
 
     if tg_parameter.param_name in ignored_param_requirements(obj.__name__):
         return mapped_type | type(None)
@@ -109,3 +110,22 @@ def cached_type_hints(obj: Any, is_class: bool) -> dict[str, Any]:
 def resolve_forward_refs_in_type(obj: type) -> type:
     """Resolves forward references in a type hint."""
     return _eval_type(obj, localns=tg_objects, globalns=None)
+
+
+T = TypeVar("T")
+
+
+def extract_mappings(
+    exceptions: dict[str, dict[str, T]], obj: object, param_name: str
+) -> list[T] | None:
+    mappings = (
+        mapping for pattern, mapping in exceptions.items() if (re.match(pattern, obj.__name__))
+    )
+    out = [
+        value
+        for mapping in mappings
+        for key, value in mapping.items()
+        if re.match(key, param_name)
+    ]
+
+    return None or out

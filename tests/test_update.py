@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # A library that provides a Python interface to the Telegram Bot API
-# Copyright (C) 2015-2024
+# Copyright (C) 2015-2026
 # Leandro Toledo de Souza <devs@python-telegram-bot.org>
 #
 # This program is free software: you can redistribute it and/or modify
@@ -16,13 +16,16 @@
 #
 # You should have received a copy of the GNU Lesser Public License
 # along with this program.  If not, see [http://www.gnu.org/licenses/].
+import datetime as dtm
 import time
 from copy import deepcopy
-from datetime import datetime
 
 import pytest
 
 from telegram import (
+    BusinessBotRights,
+    BusinessConnection,
+    BusinessMessagesDeleted,
     CallbackQuery,
     Chat,
     ChatBoost,
@@ -35,15 +38,18 @@ from telegram import (
     ChosenInlineResult,
     InaccessibleMessage,
     InlineQuery,
+    ManagedBotUpdated,
     Message,
     MessageReactionCountUpdated,
     MessageReactionUpdated,
+    PaidMediaPurchased,
     Poll,
     PollAnswer,
     PollOption,
     PreCheckoutQuery,
     ReactionCount,
     ReactionTypeEmoji,
+    ShippingAddress,
     ShippingQuery,
     Update,
     User,
@@ -54,7 +60,7 @@ from tests.auxil.slots import mro_slots
 
 message = Message(
     1,
-    datetime.utcnow(),
+    dtm.datetime.utcnow(),
     Chat(1, ""),
     from_user=User(1, "", False),
     text="Text",
@@ -62,7 +68,7 @@ message = Message(
 )
 channel_post = Message(
     1,
-    datetime.utcnow(),
+    dtm.datetime.utcnow(),
     Chat(1, ""),
     text="Text",
     sender_chat=Chat(1, ""),
@@ -119,6 +125,37 @@ message_reaction_count = MessageReactionCountUpdated(
     reactions=(ReactionCount(ReactionTypeEmoji("👍"), 1),),
 )
 
+business_connection = BusinessConnection(
+    "1",
+    User(1, "name", False),
+    1,
+    from_timestamp(int(time.time())),
+    True,
+    rights=BusinessBotRights(can_reply=True),
+)
+
+deleted_business_messages = BusinessMessagesDeleted(
+    "1",
+    Chat(1, ""),
+    (1, 2),
+)
+
+business_message = Message(
+    1,
+    dtm.datetime.utcnow(),
+    Chat(1, ""),
+    User(1, "", False),
+)
+
+purchased_paid_media = PaidMediaPurchased(
+    from_user=User(1, "", False),
+    paid_media_payload="payload",
+)
+
+managed_bot = ManagedBotUpdated(
+    user=User(1, "creator", True),
+    bot=User(2, "bot", True),
+)
 
 params = [
     {"message": message},
@@ -128,7 +165,11 @@ params = [
     {"edited_channel_post": channel_post},
     {"inline_query": InlineQuery(1, User(1, "", False), "", "")},
     {"chosen_inline_result": ChosenInlineResult("id", User(1, "", False), "")},
-    {"shipping_query": ShippingQuery("id", User(1, "", False), "", None)},
+    {
+        "shipping_query": ShippingQuery(
+            "id", User(1, "", False), "", ShippingAddress("", "", "", "", "", "")
+        )
+    },
     {"pre_checkout_query": PreCheckoutQuery("id", User(1, "", False), "", 0, "")},
     {"poll": Poll("id", "?", [PollOption(".", 1)], False, False, False, Poll.REGULAR, True)},
     {
@@ -150,6 +191,12 @@ params = [
     {"removed_chat_boost": removed_chat_boost},
     {"message_reaction": message_reaction},
     {"message_reaction_count": message_reaction_count},
+    {"business_connection": business_connection},
+    {"deleted_business_messages": deleted_business_messages},
+    {"business_message": business_message},
+    {"edited_business_message": business_message},
+    {"purchased_paid_media": purchased_paid_media},
+    {"managed_bot": managed_bot},
     # Must be last to conform with `ids` below!
     {"callback_query": CallbackQuery(1, User(1, "", False), "chat")},
 ]
@@ -173,6 +220,12 @@ all_types = (
     "removed_chat_boost",
     "message_reaction",
     "message_reaction_count",
+    "business_connection",
+    "deleted_business_messages",
+    "business_message",
+    "edited_business_message",
+    "purchased_paid_media",
+    "managed_bot",
 )
 
 ids = (*all_types, "callback_query_without_message")
@@ -180,14 +233,14 @@ ids = (*all_types, "callback_query_without_message")
 
 @pytest.fixture(scope="module", params=params, ids=ids)
 def update(request):
-    return Update(update_id=TestUpdateBase.update_id, **request.param)
+    return Update(update_id=UpdateTestBase.update_id, **request.param)
 
 
-class TestUpdateBase:
+class UpdateTestBase:
     update_id = 868573637
 
 
-class TestUpdateWithoutRequest(TestUpdateBase):
+class TestUpdateWithoutRequest(UpdateTestBase):
     def test_slot_behaviour(self):
         update = Update(self.update_id)
         for attr in update.__slots__:
@@ -195,11 +248,11 @@ class TestUpdateWithoutRequest(TestUpdateBase):
         assert len(mro_slots(update)) == len(set(mro_slots(update))), "duplicate slot"
 
     @pytest.mark.parametrize("paramdict", argvalues=params, ids=ids)
-    def test_de_json(self, bot, paramdict):
+    def test_de_json(self, offline_bot, paramdict):
         json_dict = {"update_id": self.update_id}
         # Convert the single update 'item' to a dict of that item and apply it to the json_dict
         json_dict.update({k: v.to_dict() for k, v in paramdict.items()})
-        update = Update.de_json(json_dict, bot)
+        update = Update.de_json(json_dict, offline_bot)
         assert update.api_kwargs == {}
 
         assert update.update_id == self.update_id
@@ -211,11 +264,6 @@ class TestUpdateWithoutRequest(TestUpdateBase):
                 i += 1
                 assert getattr(update, _type) == paramdict[_type]
         assert i == 1
-
-    def test_update_de_json_empty(self, bot):
-        update = Update.de_json(None, bot)
-
-        assert update is None
 
     def test_to_dict(self, update):
         update_dict = update.to_dict()
@@ -257,6 +305,9 @@ class TestUpdateWithoutRequest(TestUpdateBase):
             or update.pre_checkout_query is not None
             or update.poll is not None
             or update.poll_answer is not None
+            or update.business_connection is not None
+            or update.purchased_paid_media is not None
+            or update.managed_bot is not None
         ):
             assert chat.id == 1
         else:
@@ -272,6 +323,7 @@ class TestUpdateWithoutRequest(TestUpdateBase):
             or update.chat_boost is not None
             or update.removed_chat_boost is not None
             or update.message_reaction_count is not None
+            or update.deleted_business_messages is not None
         ):
             assert user.id == 1
         else:
@@ -297,6 +349,7 @@ class TestUpdateWithoutRequest(TestUpdateBase):
             or update.chat_boost is not None
             or update.removed_chat_boost is not None
             or update.message_reaction_count is not None
+            or update.deleted_business_messages is not None
         ):
             if update.channel_post or update.edited_channel_post:
                 assert isinstance(sender, Chat)
@@ -329,6 +382,7 @@ class TestUpdateWithoutRequest(TestUpdateBase):
             or update.chat_boost is not None
             or update.removed_chat_boost is not None
             or update.message_reaction_count is not None
+            or update.deleted_business_messages is not None
         ):
             if (
                 update.message
@@ -365,6 +419,10 @@ class TestUpdateWithoutRequest(TestUpdateBase):
             or update.removed_chat_boost is not None
             or update.message_reaction is not None
             or update.message_reaction_count is not None
+            or update.deleted_business_messages is not None
+            or update.business_connection is not None
+            or update.purchased_paid_media is not None
+            or update.managed_bot is not None
         ):
             assert eff_message.message_id == message.message_id
         else:

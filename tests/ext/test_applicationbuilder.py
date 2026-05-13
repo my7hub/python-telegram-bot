@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # A library that provides a Python interface to the Telegram Bot API
-# Copyright (C) 2015-2024
+# Copyright (C) 2015-2026
 # Leandro Toledo de Souza <devs@python-telegram-bot.org>
 #
 # This program is free software: you can redistribute it and/or modify
@@ -17,6 +17,7 @@
 # You should have received a copy of the GNU Lesser Public License
 # along with this program.  If not, see [http://www.gnu.org/licenses/].
 import asyncio
+import datetime as dtm
 import inspect
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -41,14 +42,13 @@ from telegram.ext import (
 from telegram.ext._applicationbuilder import _BOT_CHECKS
 from telegram.ext._baseupdateprocessor import SimpleUpdateProcessor
 from telegram.request import HTTPXRequest
-from telegram.warnings import PTBDeprecationWarning
 from tests.auxil.constants import PRIVATE_KEY
 from tests.auxil.envvars import TEST_WITH_OPT_DEPS
 from tests.auxil.files import data_file
 from tests.auxil.slots import mro_slots
 
 
-@pytest.fixture()
+@pytest.fixture
 def builder():
     return ApplicationBuilder()
 
@@ -74,7 +74,7 @@ class TestApplicationBuilder:
         arguments = inspect.signature(HTTPXRequest.__init__).parameters.keys()
         prefix = "get_updates_" if get_updates else ""
         for argument in arguments:
-            if argument == "self":
+            if argument in ("self", "httpx_kwargs"):
                 continue
             if argument == "media_write_timeout" and get_updates:
                 # get_updates never makes media requests
@@ -110,7 +110,7 @@ class TestApplicationBuilder:
             ApplicationBuilder()
 
     def test_build_without_token(self, builder):
-        with pytest.raises(RuntimeError, match="No bot token was set."):
+        with pytest.raises(RuntimeError, match="No bot token was set\\."):
             builder.build()
 
     def test_build_custom_bot(self, builder, bot):
@@ -150,9 +150,7 @@ class TestApplicationBuilder:
         assert app.bot.local_mode is False
 
         get_updates_client = app.bot._request[0]._client
-        assert get_updates_client.limits == httpx.Limits(
-            max_connections=1, max_keepalive_connections=1
-        )
+        assert get_updates_client.limits == httpx.Limits(max_connections=1)
         assert get_updates_client.proxy is None
         assert get_updates_client.timeout == httpx.Timeout(
             connect=5.0, read=5.0, write=5.0, pool=1.0
@@ -161,7 +159,7 @@ class TestApplicationBuilder:
         assert not get_updates_client.http2
 
         client = app.bot.request._client
-        assert client.limits == httpx.Limits(max_connections=256, max_keepalive_connections=256)
+        assert client.limits == httpx.Limits(max_connections=256)
         assert client.proxy is None
         assert client.timeout == httpx.Timeout(connect=5.0, read=5.0, write=5.0, pool=1.0)
         assert client.http1 is True
@@ -207,7 +205,6 @@ class TestApplicationBuilder:
             "write_timeout",
             "media_write_timeout",
             "proxy",
-            "proxy_url",
             "socket_options",
             "bot",
             "updater",
@@ -217,9 +214,8 @@ class TestApplicationBuilder:
     def test_mutually_exclusive_for_request(self, builder, method):
         builder.request(1)
 
-        method_name = method.replace("proxy_url", "proxy")
         with pytest.raises(
-            RuntimeError, match=f"`{method_name}` may only be set, if no request instance"
+            RuntimeError, match=f"`{method}` may only be set, if no request instance"
         ):
             getattr(builder, method)(data_file("private.key"))
 
@@ -237,7 +233,6 @@ class TestApplicationBuilder:
             "get_updates_read_timeout",
             "get_updates_write_timeout",
             "get_updates_proxy",
-            "get_updates_proxy_url",
             "get_updates_socket_options",
             "get_updates_http_version",
             "bot",
@@ -247,10 +242,9 @@ class TestApplicationBuilder:
     def test_mutually_exclusive_for_get_updates_request(self, builder, method):
         builder.get_updates_request(1)
 
-        method_name = method.replace("proxy_url", "proxy")
         with pytest.raises(
             RuntimeError,
-            match=f"`{method_name}` may only be set, if no get_updates_request instance",
+            match=f"`{method}` may only be set, if no get_updates_request instance",
         ):
             getattr(builder, method)(data_file("private.key"))
 
@@ -267,7 +261,6 @@ class TestApplicationBuilder:
             "get_updates_pool_timeout",
             "get_updates_read_timeout",
             "get_updates_write_timeout",
-            "get_updates_proxy_url",
             "get_updates_proxy",
             "get_updates_socket_options",
             "get_updates_http_version",
@@ -278,7 +271,6 @@ class TestApplicationBuilder:
             "write_timeout",
             "media_write_timeout",
             "proxy",
-            "proxy_url",
             "socket_options",
             "http_version",
             "bot",
@@ -290,17 +282,15 @@ class TestApplicationBuilder:
     def test_mutually_exclusive_for_updater(self, builder, method):
         builder.updater(1)
 
-        method_name = method.replace("proxy_url", "proxy")
         with pytest.raises(
             RuntimeError,
-            match=f"`{method_name}` may only be set, if no updater",
+            match=f"`{method}` may only be set, if no updater",
         ):
             getattr(builder, method)(data_file("private.key"))
 
         builder = ApplicationBuilder()
         getattr(builder, method)(data_file("private.key"))
 
-        method = method.replace("proxy_url", "proxy")
         with pytest.raises(RuntimeError, match=f"`updater` may only be set, if no {method}"):
             builder.updater(1)
 
@@ -313,7 +303,6 @@ class TestApplicationBuilder:
             "get_updates_read_timeout",
             "get_updates_write_timeout",
             "get_updates_proxy",
-            "get_updates_proxy_url",
             "get_updates_socket_options",
             "get_updates_http_version",
             "connection_pool_size",
@@ -323,7 +312,6 @@ class TestApplicationBuilder:
             "write_timeout",
             "media_write_timeout",
             "proxy",
-            "proxy_url",
             "socket_options",
             "bot",
             "http_version",
@@ -341,14 +329,11 @@ class TestApplicationBuilder:
         getattr(builder, method)(data_file("private.key"))
         builder.updater(None)
 
-    # We test with bot the new & legacy version to ensure that the legacy version still works
-    @pytest.mark.parametrize(
-        ("proxy_method", "get_updates_proxy_method"),
-        [("proxy", "get_updates_proxy"), ("proxy_url", "get_updates_proxy_url")],
-        ids=["new", "legacy"],
-    )
     def test_all_bot_args_custom(
-        self, builder, bot, monkeypatch, proxy_method, get_updates_proxy_method
+        self,
+        builder,
+        bot,
+        monkeypatch,
     ):
         # Only socket_options is tested in a standalone test, since that's easier
         defaults = Defaults()
@@ -359,11 +344,7 @@ class TestApplicationBuilder:
             PRIVATE_KEY
         ).defaults(defaults).arbitrary_callback_data(42).request(request).get_updates_request(
             get_updates_request
-        ).rate_limiter(
-            rate_limiter
-        ).local_mode(
-            True
-        )
+        ).rate_limiter(rate_limiter).local_mode(True)
         built_bot = builder.build().bot
 
         # In the following we access some private attributes of bot and request. this is not
@@ -403,13 +384,12 @@ class TestApplicationBuilder:
         builder = ApplicationBuilder().token(bot.token)
         builder.connection_pool_size(1).connect_timeout(2).pool_timeout(3).read_timeout(
             4
-        ).write_timeout(5).media_write_timeout(6).http_version("1.1")
-        getattr(builder, proxy_method)("proxy")
+        ).write_timeout(5).media_write_timeout(6).http_version("1.1").proxy("proxy")
         app = builder.build()
         client = app.bot.request._client
 
         assert client.timeout == httpx.Timeout(pool=3, connect=2, read=4, write=5)
-        assert client.limits == httpx.Limits(max_connections=1, max_keepalive_connections=1)
+        assert client.limits == httpx.Limits(max_connections=1)
         assert client.proxy == "proxy"
         assert client.http1 is True
         assert client.http2 is False
@@ -421,15 +401,12 @@ class TestApplicationBuilder:
             2
         ).get_updates_pool_timeout(3).get_updates_read_timeout(4).get_updates_write_timeout(
             5
-        ).get_updates_http_version(
-            "1.1"
-        )
-        getattr(builder, get_updates_proxy_method)("get_updates_proxy")
+        ).get_updates_http_version("1.1").get_updates_proxy("get_updates_proxy")
         app = builder.build()
         client = app.bot._request[0]._client
 
         assert client.timeout == httpx.Timeout(pool=3, connect=2, read=4, write=5)
-        assert client.limits == httpx.Limits(max_connections=1, max_keepalive_connections=1)
+        assert client.limits == httpx.Limits(max_connections=1)
         assert client.proxy == "get_updates_proxy"
         assert client.http1 is True
         assert client.http2 is False
@@ -440,7 +417,6 @@ class TestApplicationBuilder:
         httpx_request_init = HTTPXRequest.__init__
 
         def init_transport(*args, **kwargs):
-            nonlocal httpx_request_kwargs
             # This is called once for request and once for get_updates_request, so we make
             # it a list
             httpx_request_kwargs.append(kwargs.copy())
@@ -585,31 +561,18 @@ class TestApplicationBuilder:
         assert isinstance(app.update_queue, asyncio.Queue)
         assert isinstance(app.updater, Updater)
 
-    def test_proxy_url_deprecation_warning(self, bot, builder, recwarn):
-        builder.token(bot.token).proxy_url("proxy_url")
-        assert len(recwarn) == 1
-        assert "`ApplicationBuilder.proxy_url` is deprecated" in str(recwarn[0].message)
-        assert recwarn[0].category is PTBDeprecationWarning
-        assert recwarn[0].filename == __file__, "wrong stacklevel"
-
-    def test_get_updates_proxy_url_deprecation_warning(self, bot, builder, recwarn):
-        builder.token(bot.token).get_updates_proxy_url("get_updates_proxy_url")
-        assert len(recwarn) == 1
-        assert "`ApplicationBuilder.get_updates_proxy_url` is deprecated" in str(
-            recwarn[0].message
-        )
-        assert recwarn[0].category is PTBDeprecationWarning
-        assert recwarn[0].filename == __file__, "wrong stacklevel"
-
     @pytest.mark.parametrize(
         ("read_timeout", "timeout", "expected"),
         [
             (None, None, 0),
             (1, None, 1),
             (None, 1, 1),
+            (None, dtm.timedelta(seconds=1), 1),
             (DEFAULT_NONE, None, 10),
             (DEFAULT_NONE, 1, 11),
+            (DEFAULT_NONE, dtm.timedelta(seconds=1), 11),
             (1, 2, 3),
+            (1, dtm.timedelta(seconds=2), 3),
         ],
     )
     async def test_get_updates_read_timeout_value_passing(

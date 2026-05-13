@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # A library that provides a Python interface to the Telegram Bot API
-# Copyright (C) 2015-2024
+# Copyright (C) 2015-2026
 # Leandro Toledo de Souza <devs@python-telegram-bot.org>
 #
 # This program is free software: you can redistribute it and/or modify
@@ -16,8 +16,9 @@
 #
 # You should have received a copy of the GNU Lesser Public License
 # along with this program.  If not, see [http://www.gnu.org/licenses/].
-import datetime
+import datetime as dtm
 import inspect
+import platform
 import re
 
 import pytest
@@ -43,20 +44,18 @@ from telegram.ext import filters
 from tests.auxil.slots import mro_slots
 
 
-@pytest.fixture()
+@pytest.fixture
 def update():
     update = Update(
         0,
         Message(
             0,
-            datetime.datetime.utcnow(),
+            dtm.datetime.utcnow(),
             Chat(0, "private"),
             from_user=User(0, "Testuser", False),
             via_bot=User(0, "Testbot", True),
             sender_chat=Chat(0, "Channel"),
-            forward_origin=MessageOriginUser(
-                datetime.datetime.utcnow(), User(0, "Testuser", False)
-            ),
+            forward_origin=MessageOriginUser(dtm.datetime.utcnow(), User(0, "Testuser", False)),
         ),
     )
     update._unfreeze()
@@ -86,7 +85,7 @@ def base_class(request):
 
 @pytest.fixture(scope="class")
 def message_origin_user():
-    return MessageOriginUser(datetime.datetime.utcnow(), User(1, "TestOther", False))
+    return MessageOriginUser(dtm.datetime.utcnow(), User(1, "TestOther", False))
 
 
 class TestFilters:
@@ -103,7 +102,7 @@ class TestFilters:
         # The total no. of filters is about 72 as of 31/10/21.
         # Gather all the filters to test using DFS-
         visited = []
-        classes = inspect.getmembers(filters, predicate=filter_class)  # List[Tuple[str, type]]
+        classes = inspect.getmembers(filters, predicate=filter_class)  # list[tuple[str, type]]
         stack = classes.copy()
         while stack:
             cls = stack[-1][-1]  # get last element and its class
@@ -155,13 +154,13 @@ class TestFilters:
                 not key.startswith("_")
                 # exclude imported stuff
                 and getattr(member, "__module__", "unknown module") == "telegram.ext.filters"
-                and key != "sys"
+                and key not in ("sys", "dtm")
             )
         }
         actual = set(filters.__all__)
-        assert (
-            actual == expected
-        ), f"Members {expected - actual} were not listed in constants.__all__"
+        assert actual == expected, (
+            f"Members {expected - actual} were not listed in constants.__all__"
+        )
 
     def test_filters_all(self, update):
         assert filters.ALL.check_update(update)
@@ -276,6 +275,18 @@ class TestFilters:
         # Should not give a match since it's a or filter and it short circuits
         result = (filters.COMMAND | filters.Regex(r"linked param")).check_update(update)
         assert result is True
+
+    def test_merged_filter_or_data_filter(self, update):
+        sre_type = type(re.match("", ""))
+        update.message.text = "deep-linked param"
+        update.message.entities = []
+        # COMMAND doesn't match; or_filter (Regex, a data filter) should return match data
+        result = (filters.COMMAND | filters.Regex(r"linked param")).check_update(update)
+        assert result
+        assert isinstance(result, dict)
+        matches = result["matches"]
+        assert isinstance(matches, list)
+        assert all(type(res) is sre_type for res in matches)
 
     def test_regex_complex_merges(self, update, message_origin_user):
         sre_type = type(re.match("", ""))
@@ -616,7 +627,7 @@ class TestFilters:
     def test_filters_reply(self, update):
         another_message = Message(
             1,
-            datetime.datetime.utcnow(),
+            dtm.datetime.utcnow(),
             Chat(0, "private"),
             from_user=User(1, "TestOther", False),
         )
@@ -713,7 +724,9 @@ class TestFilters:
         assert not filters.Document.WAV.check_update(update)
         assert not filters.Document.AUDIO.check_update(update)
 
-        update.message.document.mime_type = "audio/x-wav"
+        update.message.document.mime_type = (
+            "audio/x-wav" if int(platform.python_version_tuple()[1]) < 14 else "audio/vnd.wave"
+        )
         assert filters.Document.WAV.check_update(update)
         assert filters.Document.AUDIO.check_update(update)
         assert not filters.Document.XML.check_update(update)
@@ -902,6 +915,11 @@ class TestFilters:
         update.message.story = "test"
         assert filters.STORY.check_update(update)
 
+    def test_filters_paid_media(self, update):
+        assert not filters.PAID_MEDIA.check_update(update)
+        update.message.paid_media = "test"
+        assert filters.PAID_MEDIA.check_update(update)
+
     def test_filters_video(self, update):
         assert not filters.VIDEO.check_update(update)
         update.message.video = "test"
@@ -1065,11 +1083,6 @@ class TestFilters:
         assert filters.StatusUpdate.WRITE_ACCESS_ALLOWED.check_update(update)
         update.message.write_access_allowed = None
 
-        update.message.api_kwargs = {"user_shared": "user_shared"}
-        assert filters.StatusUpdate.ALL.check_update(update)
-        assert filters.StatusUpdate.USER_SHARED.check_update(update)
-        update.message.api_kwargs = {}
-
         update.message.users_shared = "users_shared"
         assert filters.StatusUpdate.ALL.check_update(update)
         assert filters.StatusUpdate.USERS_SHARED.check_update(update)
@@ -1090,9 +1103,104 @@ class TestFilters:
         assert filters.StatusUpdate.GIVEAWAY_COMPLETED.check_update(update)
         update.message.giveaway_completed = None
 
-    def test_filters_forwarded(self, update, message_origin_user):
+        update.message.chat_background_set = "test_background"
+        assert filters.StatusUpdate.ALL.check_update(update)
+        assert filters.StatusUpdate.CHAT_BACKGROUND_SET.check_update(update)
+        update.message.chat_background_set = None
+
+        update.message.refunded_payment = "refunded_payment"
+        assert filters.StatusUpdate.ALL.check_update(update)
+        assert filters.StatusUpdate.REFUNDED_PAYMENT.check_update(update)
+        update.message.refunded_payment = None
+
+        update.message.suggested_post_approval_failed = "suggested_post_approval_failed"
+        assert filters.StatusUpdate.ALL.check_update(update)
+        assert filters.StatusUpdate.SUGGESTED_POST_APPROVAL_FAILED.check_update(update)
+        update.message.suggested_post_approval_failed = None
+
+        update.message.suggested_post_approved = "suggested_post_approved"
+        assert filters.StatusUpdate.ALL.check_update(update)
+        assert filters.StatusUpdate.SUGGESTED_POST_APPROVED.check_update(update)
+        update.message.suggested_post_approved = None
+
+        update.message.suggested_post_declined = "suggested_post_declined"
+        assert filters.StatusUpdate.ALL.check_update(update)
+        assert filters.StatusUpdate.SUGGESTED_POST_DECLINED.check_update(update)
+        update.message.suggested_post_declined = None
+
+        update.message.suggested_post_paid = "suggested_post_paid"
+        assert filters.StatusUpdate.ALL.check_update(update)
+        assert filters.StatusUpdate.SUGGESTED_POST_PAID.check_update(update)
+        update.message.suggested_post_paid = None
+
+        update.message.suggested_post_refunded = "suggested_post_refunded"
+        assert filters.StatusUpdate.ALL.check_update(update)
+        assert filters.StatusUpdate.SUGGESTED_POST_REFUNDED.check_update(update)
+        update.message.suggested_post_refunded = None
+
+        update.message.gift = "gift"
+        assert filters.StatusUpdate.ALL.check_update(update)
+        assert filters.StatusUpdate.GIFT.check_update(update)
+        update.message.gift = None
+
+        update.message.unique_gift = "unique_gift"
+        assert filters.StatusUpdate.ALL.check_update(update)
+        assert filters.StatusUpdate.UNIQUE_GIFT.check_update(update)
+        update.message.unique_gift = None
+
+        update.message.gift_upgrade_sent = "gift_upgrade_sent"
+        assert filters.StatusUpdate.ALL.check_update(update)
+        assert filters.StatusUpdate.GIFT_UPGRADE_SENT.check_update(update)
+        update.message.gift_upgrade_sent = None
+
+        update.message.paid_message_price_changed = "paid_message_price_changed"
+        assert filters.StatusUpdate.ALL.check_update(update)
+        assert filters.StatusUpdate.PAID_MESSAGE_PRICE_CHANGED.check_update(update)
+        update.message.paid_message_price_changed = None
+
+        update.message.direct_message_price_changed = "direct_message_price_changed"
+        assert filters.StatusUpdate.ALL.check_update(update)
+        assert filters.StatusUpdate.DIRECT_MESSAGE_PRICE_CHANGED.check_update(update)
+        update.message.direct_message_price_changed = None
+
+        update.message.checklist_tasks_added = "checklist_tasks_added"
+        assert filters.StatusUpdate.ALL.check_update(update)
+        assert filters.StatusUpdate.CHECKLIST_TASKS_ADDED.check_update(update)
+        update.message.checklist_tasks_added = None
+
+        update.message.checklist_tasks_done = "checklist_tasks_done"
+        assert filters.StatusUpdate.ALL.check_update(update)
+        assert filters.StatusUpdate.CHECKLIST_TASKS_DONE.check_update(update)
+        update.message.checklist_tasks_done = None
+
+        update.message.chat_owner_changed = "chat_owner_changed"
+        assert filters.StatusUpdate.ALL.check_update(update)
+        assert filters.StatusUpdate.CHAT_OWNER_CHANGED.check_update(update)
+        update.message.chat_owner_changed = None
+
+        update.message.chat_owner_left = "chat_owner_left"
+        assert filters.StatusUpdate.ALL.check_update(update)
+        assert filters.StatusUpdate.CHAT_OWNER_LEFT.check_update(update)
+        update.message.chat_owner_left = None
+
+        update.message.poll_option_added = "poll_option_added"
+        assert filters.StatusUpdate.ALL.check_update(update)
+        assert filters.StatusUpdate.POLL_OPTION_ADDED.check_update(update)
+        update.message.poll_option_added = None
+
+        update.message.poll_option_deleted = "poll_option_deleted"
+        assert filters.StatusUpdate.ALL.check_update(update)
+        assert filters.StatusUpdate.POLL_OPTION_DELETED.check_update(update)
+        update.message.poll_option_deleted = None
+
+        update.message.managed_bot_created = "test"
+        assert filters.StatusUpdate.ALL.check_update(update)
+        assert filters.StatusUpdate.MANAGED_BOT_CREATED.check_update(update)
+        update.message.managed_bot_created = None
+
+    def test_filters_forwarded(self, update):
         assert filters.FORWARDED.check_update(update)
-        update.message.forward_origin = MessageOriginHiddenUser(datetime.datetime.utcnow(), 1)
+        update.message.forward_origin = MessageOriginHiddenUser(dtm.datetime.utcnow(), 1)
         assert filters.FORWARDED.check_update(update)
         update.message.forward_origin = None
         assert not filters.FORWARDED.check_update(update)
@@ -1101,6 +1209,11 @@ class TestFilters:
         assert not filters.GAME.check_update(update)
         update.message.game = "test"
         assert filters.GAME.check_update(update)
+
+    def test_filters_effect_id(self, update):
+        assert not filters.EFFECT_ID.check_update(update)
+        update.message.effect_id = "test"
+        assert filters.EFFECT_ID.check_update(update)
 
     def test_entities_filter(self, update, message_entity):
         update.message.entities = [message_entity]
@@ -1316,15 +1429,12 @@ class TestFilters:
 
     def test_filters_chat_id(self, update):
         assert not filters.Chat(chat_id=1).check_update(update)
-        assert filters.CHAT.check_update(update)
         update.message.chat.id = 1
         assert filters.Chat(chat_id=1).check_update(update)
-        assert filters.CHAT.check_update(update)
         update.message.chat.id = 2
         assert filters.Chat(chat_id=[1, 2]).check_update(update)
         assert not filters.Chat(chat_id=[3, 4]).check_update(update)
         update.message.chat = None
-        assert not filters.CHAT.check_update(update)
         assert not filters.Chat(chat_id=[3, 4]).check_update(update)
 
     def test_filters_chat_username(self, update):
@@ -1452,6 +1562,11 @@ class TestFilters:
 
         with pytest.raises(RuntimeError, match="Cannot set name"):
             f.name = "foo"
+
+    def test_filters_forum(self, update):
+        assert not filters.FORUM.check_update(update)
+        update.message.chat.is_forum = True
+        assert filters.FORUM.check_update(update)
 
     def test_filters_forwarded_from_init(self):
         with pytest.raises(RuntimeError, match="in conjunction with"):
@@ -2035,6 +2150,11 @@ class TestFilters:
         update.message.is_automatic_forward = True
         assert filters.IS_AUTOMATIC_FORWARD.check_update(update)
 
+    def test_filters_is_from_offline(self, update):
+        assert not filters.IS_FROM_OFFLINE.check_update(update)
+        update.message.is_from_offline = True
+        assert filters.IS_FROM_OFFLINE.check_update(update)
+
     def test_filters_is_topic_message(self, update):
         assert not filters.IS_TOPIC_MESSAGE.check_update(update)
         update.message.is_topic_message = True
@@ -2059,6 +2179,11 @@ class TestFilters:
         assert not filters.SUCCESSFUL_PAYMENT.check_update(update)
         update.message.successful_payment = "test"
         assert filters.SUCCESSFUL_PAYMENT.check_update(update)
+
+    def test_filters_suggested_post_info(self, update):
+        assert not filters.SUGGESTED_POST_INFO.check_update(update)
+        update.message.suggested_post_info = "test"
+        assert filters.SUGGESTED_POST_INFO.check_update(update)
 
     def test_filters_successful_payment_payloads(self, update):
         assert not filters.SuccessfulPayment(("custom-payload",)).check_update(update)
@@ -2343,6 +2468,9 @@ class TestFilters:
         assert not filters.UpdateType.EDITED_CHANNEL_POST.check_update(update)
         assert not filters.UpdateType.CHANNEL_POSTS.check_update(update)
         assert not filters.UpdateType.EDITED.check_update(update)
+        assert not filters.UpdateType.BUSINESS_MESSAGES.check_update(update)
+        assert not filters.UpdateType.BUSINESS_MESSAGE.check_update(update)
+        assert not filters.UpdateType.EDITED_BUSINESS_MESSAGE.check_update(update)
 
     def test_update_type_edited_message(self, update):
         update.edited_message, update.message = update.message, update.edited_message
@@ -2353,6 +2481,9 @@ class TestFilters:
         assert not filters.UpdateType.EDITED_CHANNEL_POST.check_update(update)
         assert not filters.UpdateType.CHANNEL_POSTS.check_update(update)
         assert filters.UpdateType.EDITED.check_update(update)
+        assert not filters.UpdateType.BUSINESS_MESSAGES.check_update(update)
+        assert not filters.UpdateType.BUSINESS_MESSAGE.check_update(update)
+        assert not filters.UpdateType.EDITED_BUSINESS_MESSAGE.check_update(update)
 
     def test_update_type_channel_post(self, update):
         update.channel_post, update.message = update.message, update.edited_message
@@ -2363,6 +2494,9 @@ class TestFilters:
         assert not filters.UpdateType.EDITED_CHANNEL_POST.check_update(update)
         assert filters.UpdateType.CHANNEL_POSTS.check_update(update)
         assert not filters.UpdateType.EDITED.check_update(update)
+        assert not filters.UpdateType.BUSINESS_MESSAGES.check_update(update)
+        assert not filters.UpdateType.BUSINESS_MESSAGE.check_update(update)
+        assert not filters.UpdateType.EDITED_BUSINESS_MESSAGE.check_update(update)
 
     def test_update_type_edited_channel_post(self, update):
         update.edited_channel_post, update.message = update.message, update.edited_message
@@ -2373,6 +2507,35 @@ class TestFilters:
         assert filters.UpdateType.EDITED_CHANNEL_POST.check_update(update)
         assert filters.UpdateType.CHANNEL_POSTS.check_update(update)
         assert filters.UpdateType.EDITED.check_update(update)
+        assert not filters.UpdateType.BUSINESS_MESSAGES.check_update(update)
+        assert not filters.UpdateType.BUSINESS_MESSAGE.check_update(update)
+        assert not filters.UpdateType.EDITED_BUSINESS_MESSAGE.check_update(update)
+
+    def test_update_type_business_message(self, update):
+        update.business_message, update.message = update.message, update.edited_message
+        assert not filters.UpdateType.MESSAGE.check_update(update)
+        assert not filters.UpdateType.EDITED_MESSAGE.check_update(update)
+        assert not filters.UpdateType.MESSAGES.check_update(update)
+        assert not filters.UpdateType.CHANNEL_POST.check_update(update)
+        assert not filters.UpdateType.EDITED_CHANNEL_POST.check_update(update)
+        assert not filters.UpdateType.CHANNEL_POSTS.check_update(update)
+        assert not filters.UpdateType.EDITED.check_update(update)
+        assert filters.UpdateType.BUSINESS_MESSAGES.check_update(update)
+        assert filters.UpdateType.BUSINESS_MESSAGE.check_update(update)
+        assert not filters.UpdateType.EDITED_BUSINESS_MESSAGE.check_update(update)
+
+    def test_update_type_edited_business_message(self, update):
+        update.edited_business_message, update.message = update.message, update.edited_message
+        assert not filters.UpdateType.MESSAGE.check_update(update)
+        assert not filters.UpdateType.EDITED_MESSAGE.check_update(update)
+        assert not filters.UpdateType.MESSAGES.check_update(update)
+        assert not filters.UpdateType.CHANNEL_POST.check_update(update)
+        assert not filters.UpdateType.EDITED_CHANNEL_POST.check_update(update)
+        assert not filters.UpdateType.CHANNEL_POSTS.check_update(update)
+        assert filters.UpdateType.EDITED.check_update(update)
+        assert filters.UpdateType.BUSINESS_MESSAGES.check_update(update)
+        assert not filters.UpdateType.BUSINESS_MESSAGE.check_update(update)
+        assert filters.UpdateType.EDITED_BUSINESS_MESSAGE.check_update(update)
 
     def test_merged_short_circuit_and(self, update, base_class):
         update.message.text = "/test"
@@ -2618,7 +2781,7 @@ class TestFilters:
             0,
             Message(
                 0,
-                datetime.datetime.utcnow(),
+                dtm.datetime.utcnow(),
                 Chat(0, "private"),
                 document=Document("str", "other_str"),
             ),
@@ -2721,3 +2884,17 @@ class TestFilters:
         update.message.sender_boost_count = "test"
         assert filters.SENDER_BOOST_COUNT.check_update(update)
         assert str(filters.SENDER_BOOST_COUNT) == "filters.SENDER_BOOST_COUNT"
+
+    def test_filters_checklist(self, update):
+        assert not filters.CHECKLIST.check_update(update)
+
+        update.message.checklist = "test"
+        assert filters.CHECKLIST.check_update(update)
+        assert str(filters.CHECKLIST) == "filters.CHECKLIST"
+
+    def test_filters_direct_messages(self, update):
+        assert not filters.DIRECT_MESSAGES.check_update(update)
+
+        update.message.chat.is_direct_messages = True
+        assert filters.DIRECT_MESSAGES.check_update(update)
+        assert str(filters.DIRECT_MESSAGES) == "filters.DIRECT_MESSAGES"

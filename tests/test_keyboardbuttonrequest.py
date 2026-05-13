@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # A library that provides a Python interface to the Telegram Bot API
-# Copyright (C) 2015-2024
+# Copyright (C) 2015-2026
 # Leandro Toledo de Souza <devs@python-telegram-bot.org>
 #
 # This program is free software: you can redistribute it and/or modify
@@ -26,27 +26,27 @@ from tests.auxil.slots import mro_slots
 @pytest.fixture(scope="class")
 def request_users():
     return KeyboardButtonRequestUsers(
-        TestKeyboardButtonRequestUsersBase.request_id,
-        TestKeyboardButtonRequestUsersBase.user_is_bot,
-        TestKeyboardButtonRequestUsersBase.user_is_premium,
-        TestKeyboardButtonRequestUsersBase.max_quantity,
+        KeyboardButtonRequestUsersTestBase.request_id,
+        KeyboardButtonRequestUsersTestBase.user_is_bot,
+        KeyboardButtonRequestUsersTestBase.user_is_premium,
+        KeyboardButtonRequestUsersTestBase.max_quantity,
     )
 
 
-class TestKeyboardButtonRequestUsersBase:
+class KeyboardButtonRequestUsersTestBase:
     request_id = 123
     user_is_bot = True
     user_is_premium = False
     max_quantity = 10
 
 
-class TestKeyboardButtonRequestUsersWithoutRequest(TestKeyboardButtonRequestUsersBase):
+class TestKeyboardButtonRequestUsersWithoutRequest(KeyboardButtonRequestUsersTestBase):
     def test_slot_behaviour(self, request_users):
         for attr in request_users.__slots__:
             assert getattr(request_users, attr, "err") != "err", f"got extra slot '{attr}'"
-        assert len(mro_slots(request_users)) == len(
-            set(mro_slots(request_users))
-        ), "duplicate slot"
+        assert len(mro_slots(request_users)) == len(set(mro_slots(request_users))), (
+            "duplicate slot"
+        )
 
     def test_to_dict(self, request_users):
         request_users_dict = request_users.to_dict()
@@ -57,14 +57,14 @@ class TestKeyboardButtonRequestUsersWithoutRequest(TestKeyboardButtonRequestUser
         assert request_users_dict["user_is_premium"] == self.user_is_premium
         assert request_users_dict["max_quantity"] == self.max_quantity
 
-    def test_de_json(self, bot):
+    def test_de_json(self, offline_bot):
         json_dict = {
             "request_id": self.request_id,
             "user_is_bot": self.user_is_bot,
             "user_is_premium": self.user_is_premium,
             "max_quantity": self.max_quantity,
         }
-        request_users = KeyboardButtonRequestUsers.de_json(json_dict, bot)
+        request_users = KeyboardButtonRequestUsers.de_json(json_dict, offline_bot)
         assert request_users.api_kwargs == {}
 
         assert request_users.request_id == self.request_id
@@ -88,18 +88,18 @@ class TestKeyboardButtonRequestUsersWithoutRequest(TestKeyboardButtonRequestUser
 @pytest.fixture(scope="class")
 def request_chat():
     return KeyboardButtonRequestChat(
-        TestKeyboardButtonRequestChatBase.request_id,
-        TestKeyboardButtonRequestChatBase.chat_is_channel,
-        TestKeyboardButtonRequestChatBase.chat_is_forum,
-        TestKeyboardButtonRequestChatBase.chat_has_username,
-        TestKeyboardButtonRequestChatBase.chat_is_created,
-        TestKeyboardButtonRequestChatBase.user_administrator_rights,
-        TestKeyboardButtonRequestChatBase.bot_administrator_rights,
-        TestKeyboardButtonRequestChatBase.bot_is_member,
+        KeyboardButtonRequestChatTestBase.request_id,
+        KeyboardButtonRequestChatTestBase.chat_is_channel,
+        KeyboardButtonRequestChatTestBase.chat_is_forum,
+        KeyboardButtonRequestChatTestBase.chat_has_username,
+        KeyboardButtonRequestChatTestBase.chat_is_created,
+        KeyboardButtonRequestChatTestBase.user_administrator_rights,
+        KeyboardButtonRequestChatTestBase.bot_administrator_rights,
+        KeyboardButtonRequestChatTestBase.bot_is_member,
     )
 
 
-class TestKeyboardButtonRequestChatBase:
+class KeyboardButtonRequestChatTestBase:
     request_id = 456
     chat_is_channel = True
     chat_is_forum = False
@@ -134,7 +134,7 @@ class TestKeyboardButtonRequestChatBase:
     bot_is_member = True
 
 
-class TestKeyboardButtonRequestChatWithoutRequest(TestKeyboardButtonRequestChatBase):
+class TestKeyboardButtonRequestChatWithoutRequest(KeyboardButtonRequestChatTestBase):
     def test_slot_behaviour(self, request_chat):
         for attr in request_chat.__slots__:
             assert getattr(request_chat, attr, "err") != "err", f"got extra slot '{attr}'"
@@ -158,7 +158,7 @@ class TestKeyboardButtonRequestChatWithoutRequest(TestKeyboardButtonRequestChatB
         )
         assert request_chat_dict["bot_is_member"] == self.bot_is_member
 
-    def test_de_json(self, bot):
+    def test_de_json(self, offline_bot):
         json_dict = {
             "request_id": self.request_id,
             "chat_is_channel": self.chat_is_channel,
@@ -168,7 +168,7 @@ class TestKeyboardButtonRequestChatWithoutRequest(TestKeyboardButtonRequestChatB
             "bot_administrator_rights": self.bot_administrator_rights.to_dict(),
             "bot_is_member": self.bot_is_member,
         }
-        request_chat = KeyboardButtonRequestChat.de_json(json_dict, bot)
+        request_chat = KeyboardButtonRequestChat.de_json(json_dict, offline_bot)
         assert request_chat.api_kwargs == {}
 
         assert request_chat.request_id == self.request_id
@@ -178,9 +178,6 @@ class TestKeyboardButtonRequestChatWithoutRequest(TestKeyboardButtonRequestChatB
         assert request_chat.user_administrator_rights == self.user_administrator_rights
         assert request_chat.bot_administrator_rights == self.bot_administrator_rights
         assert request_chat.bot_is_member == self.bot_is_member
-
-        empty_chat = KeyboardButtonRequestChat.de_json({}, bot)
-        assert empty_chat is None
 
     def test_equality(self):
         a = KeyboardButtonRequestChat(self.request_id, True)

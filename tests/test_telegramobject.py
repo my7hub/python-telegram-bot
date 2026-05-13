@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # A library that provides a Python interface to the Telegram Bot API
-# Copyright (C) 2015-2024
+# Copyright (C) 2015-2026
 # Leandro Toledo de Souza <devs@python-telegram-bot.org>
 #
 # This program is free software: you can redistribute it and/or modify
@@ -16,7 +16,7 @@
 #
 # You should have received a copy of the GNU Lesser Public License
 # along with this program.  If not, see [http://www.gnu.org/licenses/].
-import datetime
+import datetime as dtm
 import inspect
 import pickle
 import re
@@ -90,6 +90,11 @@ class TestTelegramObject:
         assert to.api_kwargs == {"foo": "bar"}
         assert to.get_bot() is bot
 
+    def test_de_json_optional_bot(self):
+        to = TelegramObject.de_json(data={})
+        with pytest.raises(RuntimeError, match="no bot associated with it"):
+            to.get_bot()
+
     def test_de_list(self, bot):
         class SubClass(TelegramObject):
             def __init__(self, arg: int, **kwargs):
@@ -98,7 +103,7 @@ class TestTelegramObject:
 
                 self._id_attrs = (self.arg,)
 
-        assert SubClass.de_list([{"arg": 1}, None, {"arg": 2}, None], bot) == (
+        assert SubClass.de_list([{"arg": 1}, {"arg": 2}], bot) == (
             SubClass(1),
             SubClass(2),
         )
@@ -141,9 +146,9 @@ class TestTelegramObject:
         if cls is TelegramObject:
             # TelegramObject doesn't have a super class
             return
-        assert "api_kwargs=api_kwargs" in inspect.getsource(
-            cls.__init__
-        ), f"{cls.__name__} doesn't seem to pass `api_kwargs` to `super().__init__`"
+        assert "api_kwargs=api_kwargs" in inspect.getsource(cls.__init__), (
+            f"{cls.__name__} doesn't seem to pass `api_kwargs` to `super().__init__`"
+        )
 
     def test_de_json_arbitrary_exceptions(self, bot):
         class SubClass(TelegramObject):
@@ -171,9 +176,7 @@ class TestTelegramObject:
         assert to.to_dict() == {"foo": "bar"}
 
     def test_to_dict_missing_attribute(self):
-        message = Message(
-            1, datetime.datetime.now(), Chat(1, "private"), from_user=User(1, "", False)
-        )
+        message = Message(1, dtm.datetime.now(), Chat(1, "private"), from_user=User(1, "", False))
         message._unfreeze()
         del message.chat
 
@@ -283,7 +286,7 @@ class TestTelegramObject:
     def test_pickle(self, bot):
         chat = Chat(2, Chat.PRIVATE)
         user = User(3, "first_name", False)
-        date = datetime.datetime.now()
+        date = dtm.datetime.now()
         photo = PhotoSize("file_id", "unique", 21, 21)
         photo.set_bot(bot)
         msg = Message(
@@ -342,10 +345,14 @@ class TestTelegramObject:
         chat = (await pp.get_chat_data())[1]
         assert chat.id == 1
         assert chat.type == Chat.PRIVATE
-        assert chat.api_kwargs == {
+        api_kwargs_expected = {
             "all_members_are_administrators": True,
             "something": "Manually inserted",
         }
+        # There are older attrs in Chat's api_kwargs which are present but we don't care about them
+        for k, v in api_kwargs_expected.items():
+            assert chat.api_kwargs[k] == v
+
         with pytest.raises(AttributeError):
             # removed attribute should not be available as attribute, only though api_kwargs
             chat.all_members_are_administrators
@@ -423,7 +430,7 @@ class PicklePropertyTest(TelegramObject):
     def test_deepcopy_telegram_obj(self, bot):
         chat = Chat(2, Chat.PRIVATE)
         user = User(3, "first_name", False)
-        date = datetime.datetime.now()
+        date = dtm.datetime.now()
         photo = PhotoSize("file_id", "unique", 21, 21)
         photo.set_bot(bot)
         msg = Message(

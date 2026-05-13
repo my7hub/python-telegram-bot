@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # A library that provides a Python interface to the Telegram Bot API
-# Copyright (C) 2015-2024
+# Copyright (C) 2015-2026
 # Leandro Toledo de Souza <devs@python-telegram-bot.org>
 #
 # This program is free software: you can redistribute it and/or modify
@@ -19,15 +19,20 @@
 import re
 from pathlib import Path
 
+from telegram._utils.strings import TextEncoding
+
 telegram_root = Path(__file__).parent.parent / "telegram"
 telegram_ext_root = telegram_root / "ext"
 exclude_dirs = {
     # We touch passport stuff only if strictly necessary.
-    telegram_root
-    / "_passport",
+    telegram_root / "_passport",
 }
 
-exclude_patterns = {re.compile(re.escape("self.type: ReactionType = type"))}
+exclude_patterns = {
+    re.compile(re.escape("self.type: ReactionType = type")),
+    re.compile(re.escape("self.type: BackgroundType = type")),
+    re.compile(re.escape("self.type: StoryAreaType = type")),
+}
 
 
 def test_types_are_converted_to_enum():
@@ -43,7 +48,7 @@ def test_types_are_converted_to_enum():
             # We don't check tg.ext.
             continue
 
-        text = path.read_text(encoding="utf-8")
+        text = path.read_text(encoding=TextEncoding.UTF_8)
         for match in re.finditer(pattern, text):
             if any(exclude_pattern.match(match.group(0)) for exclude_pattern in exclude_patterns):
                 continue

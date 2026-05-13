@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 #  A library that provides a Python interface to the Telegram Bot API
-#  Copyright (C) 2015-2024
+#  Copyright (C) 2015-2026
 #  Leandro Toledo de Souza <devs@python-telegram-bot.org>
 #
 #  This program is free software: you can redistribute it and/or modify
@@ -17,11 +17,15 @@
 #  You should have received a copy of the GNU Lesser Public License
 #  along with this program.  If not, see [http://www.gnu.org/licenses/].
 """Provides functions to test both methods."""
-import datetime
+
+import datetime as dtm
 import functools
 import inspect
 import re
-from typing import Any, Callable, Dict, Iterable, List, Optional
+import zoneinfo
+from collections.abc import Callable, Collection, Iterable
+from types import GenericAlias
+from typing import Any, ForwardRef
 
 import pytest
 
@@ -29,24 +33,22 @@ import telegram  # for ForwardRef resolution
 from telegram import (
     Bot,
     ChatPermissions,
-    File,
     InlineQueryResultArticle,
     InlineQueryResultCachedPhoto,
     InputMediaPhoto,
+    InputPaidMediaPhoto,
     InputTextMessageContent,
     LinkPreviewOptions,
     ReplyParameters,
+    Sticker,
     TelegramObject,
 )
+from telegram._utils.datetime import to_timestamp
 from telegram._utils.defaultvalue import DEFAULT_NONE, DefaultValue
 from telegram.constants import InputMediaType
 from telegram.ext import Defaults, ExtBot
 from telegram.request import RequestData
-from tests.auxil.envvars import TEST_WITH_OPT_DEPS
-
-if TEST_WITH_OPT_DEPS:
-    import pytz
-
+from tests.auxil.dummy_objects import get_dummy_object_json_dict
 
 FORWARD_REF_PATTERN = re.compile(r"ForwardRef\('(?P<class_name>\w+)'\)")
 """ A pattern to find a class name in a ForwardRef typing annotation.
@@ -57,8 +59,9 @@ Class name (in a named group) is surrounded by parentheses and single quotes.
 def check_shortcut_signature(
     shortcut: Callable,
     bot_method: Callable,
-    shortcut_kwargs: List[str],
-    additional_kwargs: List[str],
+    shortcut_kwargs: list[str],
+    additional_kwargs: list[str],
+    annotation_overrides: dict[str, tuple[Any, Any]] | None = None,
 ) -> bool:
     """
     Checks that the signature of a shortcut matches the signature of the underlying bot method.
@@ -68,13 +71,17 @@ def check_shortcut_signature(
         bot_method: The bot method, e.g. :meth:`telegram.Bot.send_message`
         shortcut_kwargs: The kwargs passed by the shortcut directly, e.g. ``chat_id``
         additional_kwargs: Additional kwargs of the shortcut that the bot method doesn't have, e.g.
-            ``quote``.
+            ``do_quote``.
+        annotation_overrides: A dictionary of exceptions for the annotation comparison. The key is
+            the name of the argument, the value is a tuple of the expected annotation and
+            the default value. E.g. ``{'parse_mode': (str, 'None')}``.
 
     Returns:
         :obj:`bool`: Whether or not the signature matches.
     """
+    annotation_overrides = annotation_overrides or {}
 
-    def resolve_class(class_name: str) -> Optional[type]:
+    def resolve_class(class_name: str) -> type | None:
         """Attempts to resolve a PTB class (telegram module only) from a ForwardRef.
 
         E.g. resolves <class 'telegram._files.sticker.StickerSet'> from "StickerSet".
@@ -117,6 +124,14 @@ def check_shortcut_signature(
         if shortcut_sig.parameters[kwarg].kind != expected_kind:
             raise Exception(f"Argument {kwarg} must be of kind {expected_kind}.")
 
+        if kwarg in annotation_overrides:
+            if shortcut_sig.parameters[kwarg].annotation != annotation_overrides[kwarg][0]:
+                raise Exception(
+                    f"For argument {kwarg} I expected {annotation_overrides[kwarg]}, "
+                    f"but got {shortcut_sig.parameters[kwarg].annotation}"
+                )
+            continue
+
         if bot_sig.parameters[kwarg].annotation != shortcut_sig.parameters[kwarg].annotation:
             if FORWARD_REF_PATTERN.search(str(shortcut_sig.parameters[kwarg])):
                 # If a shortcut signature contains a ForwardRef, the simple comparison of
@@ -125,6 +140,7 @@ def check_shortcut_signature(
                 for shortcut_arg, bot_arg in zip(
                     shortcut_sig.parameters[kwarg].annotation.__args__,
                     bot_sig.parameters[kwarg].annotation.__args__,
+                    strict=False,
                 ):
                     shortcut_arg_to_check = shortcut_arg  # for ruff
                     match = FORWARD_REF_PATTERN.search(str(shortcut_arg))
@@ -155,6 +171,13 @@ def check_shortcut_signature(
     bot_method_sig = inspect.signature(bot_method)
     shortcut_sig = inspect.signature(shortcut)
     for arg in expected_args:
+        if arg in annotation_overrides:
+            if shortcut_sig.parameters[arg].default == annotation_overrides[arg][1]:
+                continue
+            raise Exception(
+                f"For argument {arg} I expected default {annotation_overrides[arg][1]}, "
+                f"but got {shortcut_sig.parameters[arg].default}"
+            )
         if not shortcut_sig.parameters[arg].default == bot_method_sig.parameters[arg].default:
             raise Exception(
                 f"Default for argument {arg} does not match the default of the Bot method."
@@ -174,8 +197,8 @@ async def check_shortcut_call(
     shortcut_method: Callable,
     bot: ExtBot,
     bot_method_name: str,
-    skip_params: Optional[Iterable[str]] = None,
-    shortcut_kwargs: Optional[Iterable[str]] = None,
+    skip_params: Iterable[str] | None = None,
+    shortcut_kwargs: Iterable[str] | None = None,
 ) -> bool:
     """
     Checks that a shortcut passes all the existing arguments to the underlying bot method. Use as::
@@ -207,21 +230,16 @@ async def check_shortcut_call(
 
     shortcut_signature = inspect.signature(shortcut_method)
     # auto_pagination: Special casing for InlineQuery.answer
-    # quote: Don't test deprecated "quote" parameter of Message.reply_*
-    kwargs = {
-        name: name
-        for name in shortcut_signature.parameters
-        if name not in ["auto_pagination", "quote"]
-    }
+    kwargs = {name: name for name in shortcut_signature.parameters if name != "auto_pagination"}
     if "reply_parameters" in kwargs:
         kwargs["reply_parameters"] = ReplyParameters(message_id=1)
 
     # We tested this for a long time, but Bot API 7.0 deprecated it in favor of
-    # reply_parameters. In the transition phase, both exist in a mutually exclusive
-    # way. Testing both cases would require a lot of additional code, so we just
-    # ignore this parameter here until it is removed.
-    kwargs.pop("reply_to_message_id", None)
-    expected_args.discard("reply_to_message_id")
+    # reply_parameters. Testing both cases would require a lot of additional code, so we just
+    # ignore these parameters here.
+    for arg in ["reply_to_message_id", "allow_sending_without_reply"]:
+        kwargs.pop(arg, None)
+        expected_args.discard(arg)
 
     async def make_assertion(**kw):
         # name == value makes sure that
@@ -233,16 +251,12 @@ async def check_shortcut_call(
             if name in ignored_args
             or (value == name or (name == "reply_parameters" and value.message_id == 1))
         }
-        if not received_kwargs == expected_args:
+        if received_kwargs != expected_args:
             raise Exception(
                 f"{orig_bot_method.__name__} did not receive correct value for the parameters "
                 f"{expected_args - received_kwargs}"
             )
 
-        if bot_method_name == "get_file":
-            # This is here mainly for PassportFile.get_file, which calls .set_credentials on the
-            # return value
-            return File(file_id="result", file_unique_id="result")
         return True
 
     setattr(bot, bot_method_name, make_assertion)
@@ -269,8 +283,13 @@ def build_kwargs(
             elif name in ["prices", "commands", "errors"]:
                 kws[name] = []
             elif name == "media":
-                media = InputMediaPhoto("media", parse_mode=manually_passed_value)
-                if "list" in str(param.annotation).lower():
+                if "star_count" in signature.parameters:
+                    media = InputPaidMediaPhoto("media")
+                else:
+                    media = InputMediaPhoto("media", parse_mode=manually_passed_value)
+
+                param_annotation = str(param.annotation).lower()
+                if "sequence" in param_annotation or "list" in param_annotation:
                     kws[name] = [media]
                 else:
                     kws[name] = media
@@ -294,6 +313,18 @@ def build_kwargs(
             elif name == "ok":
                 kws["ok"] = False
                 kws["error_message"] = "error"
+            elif name == "options":
+                kws[name] = ["option1", "option2"]
+            elif name in ("sticker", "old_sticker"):
+                kws[name] = Sticker(
+                    file_id="file_id",
+                    file_unique_id="file_unique_id",
+                    width=1,
+                    height=1,
+                    is_animated=False,
+                    is_video=False,
+                    type="regular",
+                )
             else:
                 kws[name] = True
 
@@ -310,15 +341,13 @@ def build_kwargs(
         # Some special casing for methods that have "exactly one of the optionals" type args
         elif name in ["location", "contact", "venue", "inline_message_id"]:
             kws[name] = True
-        elif name == "until_date":
+        elif name.endswith("_date"):
             if manually_passed_value not in [None, DEFAULT_NONE]:
                 # Europe/Berlin
-                kws[name] = pytz.timezone("Europe/Berlin").localize(
-                    datetime.datetime(2000, 1, 1, 0)
-                )
+                kws[name] = dtm.datetime(2000, 1, 1, 0, tzinfo=zoneinfo.ZoneInfo("Europe/Berlin"))
             else:
                 # naive UTC
-                kws[name] = datetime.datetime(2000, 1, 1, 0)
+                kws[name] = dtm.datetime(2000, 1, 1, 0)
         elif name == "reply_parameters":
             kws[name] = telegram.ReplyParameters(
                 message_id=1,
@@ -363,11 +392,47 @@ def make_assertion_for_link_preview_options(
             )
 
 
+def _check_forward_ref(obj: object) -> str | object:
+    if isinstance(obj, ForwardRef):
+        return obj.__forward_arg__
+    return obj
+
+
+def guess_return_type_name(method: Callable[[...], Any]) -> tuple[str | object, bool]:
+    # Using typing.get_type_hints(method) would be the nicer as it also resolves ForwardRefs
+    # and string annotations. But it also wants to resolve the parameter annotations, which
+    # need additional namespaces and that's not worth the struggle for now …
+    return_annotation = _check_forward_ref(inspect.signature(method).return_annotation)
+    as_tuple = False
+
+    if isinstance(return_annotation, GenericAlias):
+        if return_annotation.__origin__ is tuple:
+            as_tuple = True
+        else:
+            raise ValueError(
+                f"Return type of {method.__name__} is a GenericAlias. This can not be handled yet."
+            )
+
+    # For tuples and Unions, we simply take the first element
+    if hasattr(return_annotation, "__args__"):
+        return _check_forward_ref(return_annotation.__args__[0]), as_tuple
+    return return_annotation, as_tuple
+
+
+_EUROPE_BERLIN_TS = to_timestamp(
+    dtm.datetime(2000, 1, 1, 0, tzinfo=zoneinfo.ZoneInfo("Europe/Berlin"))
+)
+_UTC_TS = to_timestamp(dtm.datetime(2000, 1, 1, 0), tzinfo=zoneinfo.ZoneInfo("UTC"))
+_AMERICA_NEW_YORK_TS = to_timestamp(
+    dtm.datetime(2000, 1, 1, 0, tzinfo=zoneinfo.ZoneInfo("America/New_York"))
+)
+
+
 async def make_assertion(
     url,
     request_data: RequestData,
     method_name: str,
-    kwargs_need_default: List[str],
+    kwargs_need_default: list[str],
     return_value,
     manually_passed_value: Any = DEFAULT_NONE,
     expected_defaults_value: Any = DEFAULT_NONE,
@@ -429,7 +494,7 @@ async def make_assertion(
             )
 
     # Check InputMedia (parse_mode can have a default)
-    def check_input_media(m: Dict):
+    def check_input_media(m: dict):
         parse_mode = m.get("parse_mode")
         if no_value_expected and parse_mode is not None:
             pytest.fail("InputMedia has non-None parse_mode, expected it to be absent")
@@ -445,7 +510,8 @@ async def make_assertion(
             )
 
     media = data.pop("media", None)
-    if media:
+    paid_media = media and data.pop("star_count", None)
+    if media and not paid_media:
         if isinstance(media, dict) and isinstance(media.get("type", None), InputMediaType):
             check_input_media(media)
         else:
@@ -498,24 +564,17 @@ async def make_assertion(
         )
 
     # Check datetime conversion
-    until_date = data.pop("until_date", None)
-    if until_date:
-        if manual_value_expected and until_date != 946681200:
-            pytest.fail("Non-naive until_date should have been interpreted as Europe/Berlin.")
-        if not any((manually_passed_value, expected_defaults_value)) and until_date != 946684800:
-            pytest.fail("Naive until_date should have been interpreted as UTC")
-        if default_value_expected and until_date != 946702800:
-            pytest.fail("Naive until_date should have been interpreted as America/New_York")
+    date_keys = [key for key in data if key.endswith("_date")]
+    for key in date_keys:
+        date_param = data.pop(key)
+        if date_param:
+            if manual_value_expected and date_param != _EUROPE_BERLIN_TS:
+                pytest.fail(f"Non-naive `{key}` should have been interpreted as Europe/Berlin.")
+            if not any((manually_passed_value, expected_defaults_value)) and date_param != _UTC_TS:
+                pytest.fail(f"Naive `{key}` should have been interpreted as UTC")
+            if default_value_expected and date_param != _AMERICA_NEW_YORK_TS:
+                pytest.fail(f"Naive `{key}` should have been interpreted as America/New_York")
 
-    if method_name in ["get_file", "get_small_file", "get_big_file"]:
-        # This is here mainly for PassportFile.get_file, which calls .set_credentials on the
-        # return value
-        out = File(file_id="result", file_unique_id="result")
-        return out.to_dict()
-    # Otherwise return None by default, as TGObject.de_json/list(None) in [None, []]
-    # That way we can check what gets passed to Request.post without having to actually
-    # make a request
-    # Some methods expect specific output, so we allow to customize that
     if isinstance(return_value, TelegramObject):
         return return_value.to_dict()
     return return_value
@@ -524,7 +583,7 @@ async def make_assertion(
 async def check_defaults_handling(
     method: Callable,
     bot: Bot,
-    return_value=None,
+    no_default_kwargs: Collection[str] = frozenset(),
 ) -> bool:
     """
     Checks that tg.ext.Defaults are handled correctly.
@@ -533,9 +592,8 @@ async def check_defaults_handling(
         method: The shortcut/bot_method
         bot: The bot. May be a telegram.Bot or a telegram.ext.ExtBot. In the former case, all
             default values will be converted to None.
-        return_value: Optional. The return value of Bot._post that the method expects. Defaults to
-            None. get_file is automatically handled. If this is a `TelegramObject`, Bot._post will
-            return the `to_dict` representation of it.
+        no_default_kwargs: Optional. A collection of keyword arguments that should not have default
+            values. Defaults to an empty frozenset.
 
     """
     raw_bot = not isinstance(bot, ExtBot)
@@ -545,7 +603,9 @@ async def check_defaults_handling(
     kwargs_need_default = {
         kwarg
         for kwarg, value in shortcut_signature.parameters.items()
-        if isinstance(value.default, DefaultValue) and not kwarg.endswith("_timeout")
+        if isinstance(value.default, DefaultValue)
+        and not kwarg.endswith("_timeout")
+        and kwarg not in no_default_kwargs
     }
     # We tested this for a long time, but Bot API 7.0 deprecated it in favor of
     # reply_parameters. In the transition phase, both exist in a mutually exclusive
@@ -558,21 +618,17 @@ async def check_defaults_handling(
         kwargs_need_default.remove("parse_mode")
 
     defaults_no_custom_defaults = Defaults()
-    kwargs = {kwarg: "custom_default" for kwarg in inspect.signature(Defaults).parameters}
-    kwargs["tzinfo"] = pytz.timezone("America/New_York")
-    kwargs.pop("disable_web_page_preview")  # mutually exclusive with link_preview_options
-    kwargs.pop("quote")  # mutually exclusive with do_quote
+    kwargs = dict.fromkeys(inspect.signature(Defaults).parameters, "custom_default")
+    kwargs["tzinfo"] = zoneinfo.ZoneInfo("America/New_York")
     kwargs["link_preview_options"] = LinkPreviewOptions(
         url="custom_default", show_above_text="custom_default"
     )
     defaults_custom_defaults = Defaults(**kwargs)
 
-    expected_return_values = [None, ()] if return_value is None else [return_value]
-    if method.__name__ in ["get_file", "get_small_file", "get_big_file"]:
-        expected_return_values = [File(file_id="result", file_unique_id="result")]
-
     request = bot._request[0] if get_updates else bot.request
     orig_post = request.post
+    return_value = get_dummy_object_json_dict(*guess_return_type_name(method))
+
     try:
         if raw_bot:
             combinations = [(None, None)]
@@ -596,7 +652,7 @@ async def check_defaults_handling(
                 expected_defaults_value=expected_defaults_value,
             )
             request.post = assertion_callback
-            assert await method(**kwargs) in expected_return_values
+            await method(**kwargs)
 
             # 2: test that we get the manually passed non-None value
             kwargs = build_kwargs(
@@ -611,7 +667,7 @@ async def check_defaults_handling(
                 expected_defaults_value=expected_defaults_value,
             )
             request.post = assertion_callback
-            assert await method(**kwargs) in expected_return_values
+            await method(**kwargs)
 
             # 3: test that we get the manually passed None value
             kwargs = build_kwargs(
@@ -626,7 +682,7 @@ async def check_defaults_handling(
                 expected_defaults_value=expected_defaults_value,
             )
             request.post = assertion_callback
-            assert await method(**kwargs) in expected_return_values
+            await method(**kwargs)
     except Exception as exc:
         raise exc
     finally:

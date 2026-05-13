@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # A library that provides a Python interface to the Telegram Bot API
-# Copyright (C) 2015-2024
+# Copyright (C) 2015-2026
 # Leandro Toledo de Souza <devs@python-telegram-bot.org>
 #
 # This program is free software: you can redistribute it and/or modify
@@ -17,6 +17,7 @@
 # You should have received a copy of the GNU Lesser Public License
 # along with this program.  If not, see [http://www.gnu.org/licenses/].
 import asyncio
+import datetime as dtm
 import os
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from telegram.constants import ParseMode
 from telegram.error import BadRequest, TelegramError
 from telegram.helpers import escape_markdown
 from telegram.request import RequestData
+from telegram.warnings import PTBDeprecationWarning
 from tests.auxil.bot_method_checks import (
     check_defaults_handling,
     check_shortcut_call,
@@ -37,7 +39,7 @@ from tests.auxil.files import data_file
 from tests.auxil.slots import mro_slots
 
 
-@pytest.fixture()
+@pytest.fixture
 def voice_file():
     with data_file("telegram.ogg").open("rb") as f:
         yield f
@@ -49,8 +51,8 @@ async def voice(bot, chat_id):
         return (await bot.send_voice(chat_id, voice=f, read_timeout=50)).voice
 
 
-class TestVoiceBase:
-    duration = 3
+class VoiceTestBase:
+    duration = dtm.timedelta(seconds=3)
     mime_type = "audio/ogg"
     file_size = 9199
     caption = "Test *voice*"
@@ -59,7 +61,7 @@ class TestVoiceBase:
     voice_file_unique_id = "adc3145fd2e84d95b64d68eaa22aa33e"
 
 
-class TestVoiceWithoutRequest(TestVoiceBase):
+class TestVoiceWithoutRequest(VoiceTestBase):
     def test_slot_behaviour(self, voice):
         for attr in voice.__slots__:
             assert getattr(voice, attr, "err") != "err", f"got extra slot '{attr}'"
@@ -74,24 +76,24 @@ class TestVoiceWithoutRequest(TestVoiceBase):
         assert voice.file_unique_id
 
     def test_expected_values(self, voice):
-        assert voice.duration == self.duration
+        assert voice._duration == self.duration
         assert voice.mime_type == self.mime_type
         assert voice.file_size == self.file_size
 
-    def test_de_json(self, bot):
+    def test_de_json(self, offline_bot):
         json_dict = {
             "file_id": self.voice_file_id,
             "file_unique_id": self.voice_file_unique_id,
-            "duration": self.duration,
+            "duration": int(self.duration.total_seconds()),
             "mime_type": self.mime_type,
             "file_size": self.file_size,
         }
-        json_voice = Voice.de_json(json_dict, bot)
+        json_voice = Voice.de_json(json_dict, offline_bot)
         assert json_voice.api_kwargs == {}
 
         assert json_voice.file_id == self.voice_file_id
         assert json_voice.file_unique_id == self.voice_file_unique_id
-        assert json_voice.duration == self.duration
+        assert json_voice._duration == self.duration
         assert json_voice.mime_type == self.mime_type
         assert json_voice.file_size == self.file_size
 
@@ -101,9 +103,28 @@ class TestVoiceWithoutRequest(TestVoiceBase):
         assert isinstance(voice_dict, dict)
         assert voice_dict["file_id"] == voice.file_id
         assert voice_dict["file_unique_id"] == voice.file_unique_id
-        assert voice_dict["duration"] == voice.duration
+        assert voice_dict["duration"] == int(self.duration.total_seconds())
+        assert isinstance(voice_dict["duration"], int)
         assert voice_dict["mime_type"] == voice.mime_type
         assert voice_dict["file_size"] == voice.file_size
+
+    def test_time_period_properties(self, PTB_TIMEDELTA, voice):
+        if PTB_TIMEDELTA:
+            assert voice.duration == self.duration
+            assert isinstance(voice.duration, dtm.timedelta)
+        else:
+            assert voice.duration == int(self.duration.total_seconds())
+            assert isinstance(voice.duration, int)
+
+    def test_time_period_int_deprecated(self, recwarn, PTB_TIMEDELTA, voice):
+        voice.duration
+
+        if PTB_TIMEDELTA:
+            assert len(recwarn) == 0
+        else:
+            assert len(recwarn) == 1
+            assert "`duration` will be of type `datetime.timedelta`" in str(recwarn[0].message)
+            assert recwarn[0].category is PTBDeprecationWarning
 
     def test_equality(self, voice):
         a = Voice(voice.file_id, voice.file_unique_id, self.duration)
@@ -125,30 +146,32 @@ class TestVoiceWithoutRequest(TestVoiceBase):
         assert a != e
         assert hash(a) != hash(e)
 
-    async def test_error_without_required_args(self, bot, chat_id):
+    async def test_error_without_required_args(self, offline_bot, chat_id):
         with pytest.raises(TypeError):
-            await bot.sendVoice(chat_id)
+            await offline_bot.sendVoice(chat_id)
 
-    async def test_send_voice_custom_filename(self, bot, chat_id, voice_file, monkeypatch):
+    async def test_send_voice_custom_filename(self, offline_bot, chat_id, voice_file, monkeypatch):
         async def make_assertion(url, request_data: RequestData, *args, **kwargs):
             return next(iter(request_data.multipart_data.values()))[0] == "custom_filename"
 
-        monkeypatch.setattr(bot.request, "post", make_assertion)
+        monkeypatch.setattr(offline_bot.request, "post", make_assertion)
 
-        assert await bot.send_voice(chat_id, voice_file, filename="custom_filename")
+        assert await offline_bot.send_voice(chat_id, voice_file, filename="custom_filename")
 
-    async def test_send_with_voice(self, monkeypatch, bot, chat_id, voice):
+    async def test_send_with_voice(self, monkeypatch, offline_bot, chat_id, voice):
         async def make_assertion(url, request_data: RequestData, *args, **kwargs):
             return request_data.json_parameters["voice"] == voice.file_id
 
-        monkeypatch.setattr(bot.request, "post", make_assertion)
-        assert await bot.send_voice(chat_id, voice=voice)
+        monkeypatch.setattr(offline_bot.request, "post", make_assertion)
+        assert await offline_bot.send_voice(chat_id, voice=voice)
 
     @pytest.mark.parametrize("local_mode", [True, False])
-    async def test_send_voice_local_files(self, monkeypatch, bot, chat_id, local_mode):
+    async def test_send_voice_local_files(
+        self, dummy_message_dict, monkeypatch, offline_bot, chat_id, local_mode
+    ):
         try:
-            bot._local_mode = local_mode
-            # For just test that the correct paths are passed as we have no local bot API set up
+            offline_bot._local_mode = local_mode
+            # For just test that the correct paths are passed as we have no local Bot API set up
             test_flag = False
             file = data_file("telegram.jpg")
             expected = file.as_uri()
@@ -159,12 +182,13 @@ class TestVoiceWithoutRequest(TestVoiceBase):
                     test_flag = data.get("voice") == expected
                 else:
                     test_flag = isinstance(data.get("voice"), InputFile)
+                return dummy_message_dict
 
-            monkeypatch.setattr(bot, "_post", make_assertion)
-            await bot.send_voice(chat_id, file)
+            monkeypatch.setattr(offline_bot, "_post", make_assertion)
+            await offline_bot.send_voice(chat_id, file)
             assert test_flag
         finally:
-            bot._local_mode = False
+            offline_bot._local_mode = False
 
     async def test_get_file_instance_method(self, monkeypatch, voice):
         async def make_assertion(*_, **kwargs):
@@ -203,12 +227,13 @@ class TestVoiceWithoutRequest(TestVoiceBase):
         await default_bot.send_voice(chat_id, voice, reply_parameters=ReplyParameters(**kwargs))
 
 
-class TestVoiceWithRequest(TestVoiceBase):
-    async def test_send_all_args(self, bot, chat_id, voice_file, voice):
+class TestVoiceWithRequest(VoiceTestBase):
+    @pytest.mark.parametrize("duration", [3, dtm.timedelta(seconds=3)])
+    async def test_send_all_args(self, bot, chat_id, voice_file, voice, duration):
         message = await bot.send_voice(
             chat_id,
             voice_file,
-            duration=self.duration,
+            duration=duration,
             caption=self.caption,
             disable_notification=False,
             protect_content=True,
@@ -335,7 +360,7 @@ class TestVoiceWithRequest(TestVoiceBase):
             )
             assert message.reply_to_message is None
         else:
-            with pytest.raises(BadRequest, match="Message to reply not found"):
+            with pytest.raises(BadRequest, match="Message to be replied not found"):
                 await default_bot.send_voice(
                     chat_id, voice, reply_to_message_id=reply_to_message.message_id
                 )

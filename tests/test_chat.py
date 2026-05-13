@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # A library that provides a Python interface to the Telegram Bot API
-# Copyright (C) 2015-2024
+# Copyright (C) 2015-2026
 # Leandro Toledo de Souza <devs@python-telegram-bot.org>
 #
 # This program is free software: you can redistribute it and/or modify
@@ -16,21 +16,19 @@
 #
 # You should have received a copy of the GNU Lesser Public License
 # along with this program.  If not, see [http://www.gnu.org/licenses/].
-import datetime
+
 
 import pytest
 
 from telegram import (
     Bot,
     Chat,
-    ChatLocation,
     ChatPermissions,
-    Location,
-    ReactionTypeCustomEmoji,
+    InputChecklist,
+    InputChecklistTask,
     ReactionTypeEmoji,
     User,
 )
-from telegram._utils.datetime import UTC, to_timestamp
 from telegram.constants import ChatAction, ChatType, ReactionEmoji
 from telegram.helpers import escape_markdown
 from tests.auxil.bot_method_checks import (
@@ -44,184 +42,58 @@ from tests.auxil.slots import mro_slots
 @pytest.fixture(scope="module")
 def chat(bot):
     chat = Chat(
-        TestChatBase.id_,
-        title=TestChatBase.title,
-        type=TestChatBase.type_,
-        username=TestChatBase.username,
-        sticker_set_name=TestChatBase.sticker_set_name,
-        can_set_sticker_set=TestChatBase.can_set_sticker_set,
-        permissions=TestChatBase.permissions,
-        slow_mode_delay=TestChatBase.slow_mode_delay,
-        bio=TestChatBase.bio,
-        linked_chat_id=TestChatBase.linked_chat_id,
-        location=TestChatBase.location,
-        has_private_forwards=True,
-        has_protected_content=True,
-        has_visible_history=True,
-        join_to_send_messages=True,
-        join_by_request=True,
-        has_restricted_voice_and_video_messages=True,
+        ChatTestBase.id_,
+        title=ChatTestBase.title,
+        type=ChatTestBase.type_,
+        username=ChatTestBase.username,
         is_forum=True,
-        active_usernames=TestChatBase.active_usernames,
-        emoji_status_custom_emoji_id=TestChatBase.emoji_status_custom_emoji_id,
-        emoji_status_expiration_date=TestChatBase.emoji_status_expiration_date,
-        has_aggressive_anti_spam_enabled=TestChatBase.has_aggressive_anti_spam_enabled,
-        has_hidden_members=TestChatBase.has_hidden_members,
-        available_reactions=TestChatBase.available_reactions,
-        accent_color_id=TestChatBase.accent_color_id,
-        background_custom_emoji_id=TestChatBase.background_custom_emoji_id,
-        profile_accent_color_id=TestChatBase.profile_accent_color_id,
-        profile_background_custom_emoji_id=TestChatBase.profile_background_custom_emoji_id,
-        unrestrict_boost_count=TestChatBase.unrestrict_boost_count,
-        custom_emoji_sticker_set_name=TestChatBase.custom_emoji_sticker_set_name,
+        first_name=ChatTestBase.first_name,
+        last_name=ChatTestBase.last_name,
+        is_direct_messages=ChatTestBase.is_direct_messages,
     )
     chat.set_bot(bot)
     chat._unfreeze()
     return chat
 
 
-class TestChatBase:
+class ChatTestBase:
     id_ = -28767330
     title = "ToledosPalaceBot - Group"
     type_ = "group"
     username = "username"
-    all_members_are_administrators = False
-    sticker_set_name = "stickers"
-    can_set_sticker_set = False
-    permissions = ChatPermissions(
-        can_send_messages=True,
-        can_change_info=False,
-        can_invite_users=True,
-    )
-    slow_mode_delay = 30
-    bio = "I'm a Barbie Girl in a Barbie World"
-    linked_chat_id = 11880
-    location = ChatLocation(Location(123, 456), "Barbie World")
-    has_protected_content = True
-    has_visible_history = True
-    has_private_forwards = True
-    join_to_send_messages = True
-    join_by_request = True
-    has_restricted_voice_and_video_messages = True
     is_forum = True
-    active_usernames = ["These", "Are", "Usernames!"]
-    emoji_status_custom_emoji_id = "VeryUniqueCustomEmojiID"
-    emoji_status_expiration_date = datetime.datetime.now(tz=UTC).replace(microsecond=0)
-    has_aggressive_anti_spam_enabled = True
-    has_hidden_members = True
-    available_reactions = [
-        ReactionTypeEmoji(ReactionEmoji.THUMBS_DOWN),
-        ReactionTypeCustomEmoji("custom_emoji_id"),
-    ]
-    accent_color_id = 1
-    background_custom_emoji_id = "background_custom_emoji_id"
-    profile_accent_color_id = 2
-    profile_background_custom_emoji_id = "profile_background_custom_emoji_id"
-    unrestrict_boost_count = 100
-    custom_emoji_sticker_set_name = "custom_emoji_sticker_set_name"
+    first_name = "first"
+    last_name = "last"
+    is_direct_messages = True
 
 
-class TestChatWithoutRequest(TestChatBase):
+class TestChatWithoutRequest(ChatTestBase):
     def test_slot_behaviour(self, chat):
         for attr in chat.__slots__:
             assert getattr(chat, attr, "err") != "err", f"got extra slot '{attr}'"
         assert len(mro_slots(chat)) == len(set(mro_slots(chat))), "duplicate slot"
 
-    def test_de_json(self, bot):
+    def test_de_json(self, offline_bot):
         json_dict = {
             "id": self.id_,
             "title": self.title,
             "type": self.type_,
             "username": self.username,
-            "all_members_are_administrators": self.all_members_are_administrators,
-            "sticker_set_name": self.sticker_set_name,
-            "can_set_sticker_set": self.can_set_sticker_set,
-            "permissions": self.permissions.to_dict(),
-            "slow_mode_delay": self.slow_mode_delay,
-            "bio": self.bio,
-            "has_protected_content": self.has_protected_content,
-            "has_visible_history": self.has_visible_history,
-            "has_private_forwards": self.has_private_forwards,
-            "linked_chat_id": self.linked_chat_id,
-            "location": self.location.to_dict(),
-            "join_to_send_messages": self.join_to_send_messages,
-            "join_by_request": self.join_by_request,
-            "has_restricted_voice_and_video_messages": (
-                self.has_restricted_voice_and_video_messages
-            ),
             "is_forum": self.is_forum,
-            "active_usernames": self.active_usernames,
-            "emoji_status_custom_emoji_id": self.emoji_status_custom_emoji_id,
-            "emoji_status_expiration_date": to_timestamp(self.emoji_status_expiration_date),
-            "has_aggressive_anti_spam_enabled": self.has_aggressive_anti_spam_enabled,
-            "has_hidden_members": self.has_hidden_members,
-            "available_reactions": [reaction.to_dict() for reaction in self.available_reactions],
-            "accent_color_id": self.accent_color_id,
-            "background_custom_emoji_id": self.background_custom_emoji_id,
-            "profile_accent_color_id": self.profile_accent_color_id,
-            "profile_background_custom_emoji_id": self.profile_background_custom_emoji_id,
-            "unrestrict_boost_count": self.unrestrict_boost_count,
-            "custom_emoji_sticker_set_name": self.custom_emoji_sticker_set_name,
+            "first_name": self.first_name,
+            "last_name": self.last_name,
+            "is_direct_messages": self.is_direct_messages,
         }
-        chat = Chat.de_json(json_dict, bot)
+        chat = Chat.de_json(json_dict, offline_bot)
 
         assert chat.id == self.id_
         assert chat.title == self.title
         assert chat.type == self.type_
         assert chat.username == self.username
-        assert chat.sticker_set_name == self.sticker_set_name
-        assert chat.can_set_sticker_set == self.can_set_sticker_set
-        assert chat.permissions == self.permissions
-        assert chat.slow_mode_delay == self.slow_mode_delay
-        assert chat.bio == self.bio
-        assert chat.has_protected_content == self.has_protected_content
-        assert chat.has_visible_history == self.has_visible_history
-        assert chat.has_private_forwards == self.has_private_forwards
-        assert chat.linked_chat_id == self.linked_chat_id
-        assert chat.location.location == self.location.location
-        assert chat.location.address == self.location.address
-        assert chat.join_to_send_messages == self.join_to_send_messages
-        assert chat.join_by_request == self.join_by_request
-        assert (
-            chat.has_restricted_voice_and_video_messages
-            == self.has_restricted_voice_and_video_messages
-        )
-        assert chat.api_kwargs == {
-            "all_members_are_administrators": self.all_members_are_administrators
-        }
         assert chat.is_forum == self.is_forum
-        assert chat.active_usernames == tuple(self.active_usernames)
-        assert chat.emoji_status_custom_emoji_id == self.emoji_status_custom_emoji_id
-        assert chat.emoji_status_expiration_date == (self.emoji_status_expiration_date)
-        assert chat.has_aggressive_anti_spam_enabled == self.has_aggressive_anti_spam_enabled
-        assert chat.has_hidden_members == self.has_hidden_members
-        assert chat.available_reactions == tuple(self.available_reactions)
-        assert chat.accent_color_id == self.accent_color_id
-        assert chat.background_custom_emoji_id == self.background_custom_emoji_id
-        assert chat.profile_accent_color_id == self.profile_accent_color_id
-        assert chat.profile_background_custom_emoji_id == self.profile_background_custom_emoji_id
-        assert chat.unrestrict_boost_count == self.unrestrict_boost_count
-        assert chat.custom_emoji_sticker_set_name == self.custom_emoji_sticker_set_name
-
-    def test_de_json_localization(self, bot, raw_bot, tz_bot):
-        json_dict = {
-            "id": self.id_,
-            "type": self.type_,
-            "emoji_status_expiration_date": to_timestamp(self.emoji_status_expiration_date),
-        }
-        chat_bot = Chat.de_json(json_dict, bot)
-        chat_bot_raw = Chat.de_json(json_dict, raw_bot)
-        chat_bot_tz = Chat.de_json(json_dict, tz_bot)
-
-        # comparing utcoffsets because comparing tzinfo objects is not reliable
-        emoji_expire_offset = chat_bot_tz.emoji_status_expiration_date.utcoffset()
-        emoji_expire_offset_tz = tz_bot.defaults.tzinfo.utcoffset(
-            chat_bot_tz.emoji_status_expiration_date.replace(tzinfo=None)
-        )
-
-        assert chat_bot.emoji_status_expiration_date.tzinfo == UTC
-        assert chat_bot_raw.emoji_status_expiration_date.tzinfo == UTC
-        assert emoji_expire_offset_tz == emoji_expire_offset
+        assert chat.first_name == self.first_name
+        assert chat.last_name == self.last_name
+        assert chat.is_direct_messages == self.is_direct_messages
 
     def test_to_dict(self, chat):
         chat_dict = chat.to_dict()
@@ -231,51 +103,10 @@ class TestChatWithoutRequest(TestChatBase):
         assert chat_dict["title"] == chat.title
         assert chat_dict["type"] == chat.type
         assert chat_dict["username"] == chat.username
-        assert chat_dict["permissions"] == chat.permissions.to_dict()
-        assert chat_dict["slow_mode_delay"] == chat.slow_mode_delay
-        assert chat_dict["bio"] == chat.bio
-        assert chat_dict["has_private_forwards"] == chat.has_private_forwards
-        assert chat_dict["has_protected_content"] == chat.has_protected_content
-        assert chat_dict["has_visible_history"] == chat.has_visible_history
-        assert chat_dict["linked_chat_id"] == chat.linked_chat_id
-        assert chat_dict["location"] == chat.location.to_dict()
-        assert chat_dict["join_to_send_messages"] == chat.join_to_send_messages
-        assert chat_dict["join_by_request"] == chat.join_by_request
-        assert (
-            chat_dict["has_restricted_voice_and_video_messages"]
-            == chat.has_restricted_voice_and_video_messages
-        )
         assert chat_dict["is_forum"] == chat.is_forum
-        assert chat_dict["active_usernames"] == list(chat.active_usernames)
-        assert chat_dict["emoji_status_custom_emoji_id"] == chat.emoji_status_custom_emoji_id
-        assert chat_dict["emoji_status_expiration_date"] == to_timestamp(
-            chat.emoji_status_expiration_date
-        )
-        assert (
-            chat_dict["has_aggressive_anti_spam_enabled"] == chat.has_aggressive_anti_spam_enabled
-        )
-        assert chat_dict["has_hidden_members"] == chat.has_hidden_members
-        assert chat_dict["available_reactions"] == [
-            reaction.to_dict() for reaction in chat.available_reactions
-        ]
-        assert chat_dict["accent_color_id"] == chat.accent_color_id
-        assert chat_dict["background_custom_emoji_id"] == chat.background_custom_emoji_id
-        assert chat_dict["profile_accent_color_id"] == chat.profile_accent_color_id
-        assert (
-            chat_dict["profile_background_custom_emoji_id"]
-            == chat.profile_background_custom_emoji_id
-        )
-        assert chat_dict["custom_emoji_sticker_set_name"] == chat.custom_emoji_sticker_set_name
-        assert chat_dict["unrestrict_boost_count"] == chat.unrestrict_boost_count
-
-    def test_always_tuples_attributes(self):
-        chat = Chat(
-            id=123,
-            title="title",
-            type=Chat.PRIVATE,
-        )
-        assert isinstance(chat.active_usernames, tuple)
-        assert chat.active_usernames == ()
+        assert chat_dict["first_name"] == chat.first_name
+        assert chat_dict["last_name"] == chat.last_name
+        assert chat_dict["is_direct_messages"] == chat.is_direct_messages
 
     def test_enum_init(self):
         chat = Chat(id=1, type="foo")
@@ -315,10 +146,7 @@ class TestChatWithoutRequest(TestChatBase):
         assert chat.full_name == "first\u2022name last\u2022name"
         chat = Chat(id=1, type=Chat.PRIVATE, first_name="first\u2022name")
         assert chat.full_name == "first\u2022name"
-        chat = Chat(
-            id=1,
-            type=Chat.PRIVATE,
-        )
+        chat = Chat(id=1, type=Chat.PRIVATE)
         assert chat.full_name is None
 
     def test_effective_name(self):
@@ -471,7 +299,7 @@ class TestChatWithoutRequest(TestChatBase):
         async def make_assertion(*_, **kwargs):
             chat_id = kwargs["chat_id"] == chat.id
             user_id = kwargs["user_id"] == 42
-            o_i_b = kwargs.get("only_if_banned", None) == only_if_banned
+            o_i_b = kwargs.get("only_if_banned") == only_if_banned
             return chat_id and user_id and o_i_b
 
         assert check_shortcut_signature(Chat.unban_member, Bot.unban_chat_member, ["chat_id"], [])
@@ -518,7 +346,7 @@ class TestChatWithoutRequest(TestChatBase):
         async def make_assertion(*_, **kwargs):
             chat_id = kwargs["chat_id"] == chat.id
             user_id = kwargs["user_id"] == 42
-            o_i_b = kwargs.get("is_anonymous", None) == is_anonymous
+            o_i_b = kwargs.get("is_anonymous") == is_anonymous
             return chat_id and user_id and o_i_b
 
         assert check_shortcut_signature(
@@ -538,7 +366,7 @@ class TestChatWithoutRequest(TestChatBase):
         async def make_assertion(*_, **kwargs):
             chat_id = kwargs["chat_id"] == chat.id
             user_id = kwargs["user_id"] == 42
-            o_i_b = kwargs.get("permissions", None) == permissions
+            o_i_b = kwargs.get("permissions") == permissions
             return chat_id and user_id and o_i_b
 
         assert check_shortcut_signature(
@@ -555,7 +383,7 @@ class TestChatWithoutRequest(TestChatBase):
     async def test_set_permissions(self, monkeypatch, chat):
         async def make_assertion(*_, **kwargs):
             chat_id = kwargs["chat_id"] == chat.id
-            permissions = kwargs["permissions"] == self.permissions
+            permissions = kwargs["permissions"] == ChatPermissions.all_permissions()
             return chat_id and permissions
 
         assert check_shortcut_signature(
@@ -567,7 +395,7 @@ class TestChatWithoutRequest(TestChatBase):
         assert await check_defaults_handling(chat.set_permissions, chat.get_bot())
 
         monkeypatch.setattr(chat.get_bot(), "set_chat_permissions", make_assertion)
-        assert await chat.set_permissions(permissions=self.permissions)
+        assert await chat.set_permissions(permissions=ChatPermissions.all_permissions())
 
     async def test_set_administrator_custom_title(self, monkeypatch, chat):
         async def make_assertion(*_, **kwargs):
@@ -696,6 +524,21 @@ class TestChatWithoutRequest(TestChatBase):
         monkeypatch.setattr(chat.get_bot(), "send_message", make_assertion)
         assert await chat.send_message(text="test")
 
+    async def test_instance_method_send_message_draft(self, monkeypatch, chat):
+        async def make_assertion(*_, **kwargs):
+            return kwargs["chat_id"] == chat.id and kwargs["text"] == "test"
+
+        assert check_shortcut_signature(
+            Chat.send_message_draft, Bot.send_message_draft, ["chat_id"], []
+        )
+        assert await check_shortcut_call(
+            chat.send_message_draft, chat.get_bot(), "send_message_draft"
+        )
+        assert await check_defaults_handling(chat.send_message_draft, chat.get_bot())
+
+        monkeypatch.setattr(chat.get_bot(), "send_message_draft", make_assertion)
+        assert await chat.send_message_draft(draft_id=1, text="test")
+
     async def test_instance_method_send_media_group(self, monkeypatch, chat):
         async def make_assertion(*_, **kwargs):
             return kwargs["chat_id"] == chat.id and kwargs["media"] == "test_media_group"
@@ -764,6 +607,23 @@ class TestChatWithoutRequest(TestChatBase):
         monkeypatch.setattr(chat.get_bot(), "send_dice", make_assertion)
         assert await chat.send_dice(emoji="test_dice")
 
+    async def test_instance_method_send_checklist(self, monkeypatch, chat):
+        checklist = InputChecklist(title="My Checklist", tasks=[InputChecklistTask(1, "Task 1")])
+
+        async def make_assertion(*_, **kwargs):
+            return (
+                kwargs["chat_id"] == chat.id
+                and kwargs["business_connection_id"] == "123"
+                and kwargs["checklist"] == checklist
+            )
+
+        assert check_shortcut_signature(Chat.send_checklist, Bot.send_checklist, ["chat_id"], [])
+        assert await check_shortcut_call(chat.send_checklist, chat.get_bot(), "send_checklist")
+        assert await check_defaults_handling(chat.send_checklist, chat.get_bot())
+
+        monkeypatch.setattr(chat.get_bot(), "send_checklist", make_assertion)
+        assert await chat.send_checklist("123", checklist)
+
     async def test_instance_method_send_game(self, monkeypatch, chat):
         async def make_assertion(*_, **kwargs):
             return kwargs["chat_id"] == chat.id and kwargs["game_short_name"] == "test_game"
@@ -795,9 +655,9 @@ class TestChatWithoutRequest(TestChatBase):
             "title",
             "description",
             "payload",
-            "provider_token",
             "currency",
             "prices",
+            "provider_token",
         )
 
     async def test_instance_method_send_location(self, monkeypatch, chat):
@@ -896,8 +756,8 @@ class TestChatWithoutRequest(TestChatBase):
             return from_chat_id and message_id and chat_id
 
         assert check_shortcut_signature(Chat.send_copy, Bot.copy_message, ["chat_id"], [])
-        assert await check_shortcut_call(chat.copy_message, chat.get_bot(), "copy_message")
-        assert await check_defaults_handling(chat.copy_message, chat.get_bot())
+        assert await check_shortcut_call(chat.send_copy, chat.get_bot(), "copy_message")
+        assert await check_defaults_handling(chat.send_copy, chat.get_bot())
 
         monkeypatch.setattr(chat.get_bot(), "copy_message", make_assertion)
         assert await chat.send_copy(from_chat_id="test_copy", message_id=42)
@@ -1073,6 +933,54 @@ class TestChatWithoutRequest(TestChatBase):
 
         monkeypatch.setattr(chat.get_bot(), "revoke_chat_invite_link", make_assertion)
         assert await chat.revoke_invite_link(invite_link=link)
+
+    async def test_create_subscription_invite_link(self, monkeypatch, chat):
+        async def make_assertion(*_, **kwargs):
+            return (
+                kwargs["chat_id"] == chat.id
+                and kwargs["subscription_price"] == 42
+                and kwargs["subscription_period"] == 42
+            )
+
+        assert check_shortcut_signature(
+            Chat.create_subscription_invite_link,
+            Bot.create_chat_subscription_invite_link,
+            ["chat_id"],
+            [],
+        )
+        assert await check_shortcut_call(
+            chat.create_subscription_invite_link,
+            chat.get_bot(),
+            "create_chat_subscription_invite_link",
+        )
+        assert await check_defaults_handling(chat.create_subscription_invite_link, chat.get_bot())
+
+        monkeypatch.setattr(chat.get_bot(), "create_chat_subscription_invite_link", make_assertion)
+        assert await chat.create_subscription_invite_link(
+            subscription_price=42, subscription_period=42
+        )
+
+    async def test_edit_subscription_invite_link(self, monkeypatch, chat):
+        link = "ThisIsALink"
+
+        async def make_assertion(*_, **kwargs):
+            return kwargs["chat_id"] == chat.id and kwargs["invite_link"] == link
+
+        assert check_shortcut_signature(
+            Chat.edit_subscription_invite_link,
+            Bot.edit_chat_subscription_invite_link,
+            ["chat_id"],
+            [],
+        )
+        assert await check_shortcut_call(
+            chat.edit_subscription_invite_link,
+            chat.get_bot(),
+            "edit_chat_subscription_invite_link",
+        )
+        assert await check_defaults_handling(chat.edit_subscription_invite_link, chat.get_bot())
+
+        monkeypatch.setattr(chat.get_bot(), "edit_chat_subscription_invite_link", make_assertion)
+        assert await chat.edit_subscription_invite_link(invite_link=link)
 
     async def test_instance_method_get_menu_button(self, monkeypatch, chat):
         async def make_assertion(*_, **kwargs):
@@ -1428,6 +1336,236 @@ class TestChatWithoutRequest(TestChatBase):
         assert await chat.set_message_reaction(
             123, [ReactionTypeEmoji(ReactionEmoji.THUMBS_DOWN)], True
         )
+
+    async def test_instance_method_send_paid_media(self, monkeypatch, chat):
+        async def make_assertion(*_, **kwargs):
+            return (
+                kwargs["chat_id"] == chat.id
+                and kwargs["media"] == "media"
+                and kwargs["star_count"] == 42
+                and kwargs["caption"] == "stars"
+                and kwargs["payload"] == "payload"
+            )
+
+        assert check_shortcut_signature(Chat.send_paid_media, Bot.send_paid_media, ["chat_id"], [])
+        assert await check_shortcut_call(chat.send_paid_media, chat.get_bot(), "send_paid_media")
+        assert await check_defaults_handling(chat.send_paid_media, chat.get_bot())
+
+        monkeypatch.setattr(chat.get_bot(), "send_paid_media", make_assertion)
+        assert await chat.send_paid_media(
+            media="media", star_count=42, caption="stars", payload="payload"
+        )
+
+    async def test_instance_method_send_gift(self, monkeypatch, chat):
+        async def make_assertion_private(*_, **kwargs):
+            return (
+                kwargs["user_id"] == chat.id
+                and kwargs["gift_id"] == "gift_id"
+                and kwargs["text"] == "text"
+                and kwargs["text_parse_mode"] == "text_parse_mode"
+                and kwargs["text_entities"] == "text_entities"
+            )
+
+        async def make_assertion_channel(*_, **kwargs):
+            return (
+                kwargs["chat_id"] == chat.id
+                and kwargs["gift_id"] == "gift_id"
+                and kwargs["text"] == "text"
+                and kwargs["text_parse_mode"] == "text_parse_mode"
+                and kwargs["text_entities"] == "text_entities"
+            )
+
+        assert check_shortcut_signature(Chat.send_gift, Bot.send_gift, ["user_id", "chat_id"], [])
+        assert await check_shortcut_call(
+            chat.send_gift, chat.get_bot(), "send_gift", ["user_id", "chat_id"]
+        )
+        assert await check_defaults_handling(chat.send_gift, chat.get_bot())
+
+        monkeypatch.setattr(chat.get_bot(), "send_gift", make_assertion_private)
+        chat.type = chat.PRIVATE
+        assert await chat.send_gift(
+            gift_id="gift_id",
+            text="text",
+            text_parse_mode="text_parse_mode",
+            text_entities="text_entities",
+        )
+        monkeypatch.setattr(chat.get_bot(), "send_gift", make_assertion_channel)
+        chat.type = chat.CHANNEL
+        assert await chat.send_gift(
+            gift_id="gift_id",
+            text="text",
+            text_parse_mode="text_parse_mode",
+            text_entities="text_entities",
+        )
+
+    @pytest.mark.parametrize("star_count", [100, None])
+    async def test_instance_method_transfer_gift(self, monkeypatch, chat, star_count):
+        async def make_assertion(*_, **kwargs):
+            return (
+                kwargs["new_owner_chat_id"] == chat.id
+                and kwargs["owned_gift_id"] == "owned_gift_id"
+                and kwargs["star_count"] == star_count
+            )
+
+        assert check_shortcut_signature(
+            Chat.transfer_gift, Bot.transfer_gift, ["new_owner_chat_id"], []
+        )
+        assert await check_shortcut_call(chat.transfer_gift, chat.get_bot(), "transfer_gift")
+        assert await check_defaults_handling(chat.transfer_gift, chat.get_bot())
+
+        monkeypatch.setattr(chat.get_bot(), "transfer_gift", make_assertion)
+        assert await chat.transfer_gift(
+            owned_gift_id="owned_gift_id",
+            star_count=star_count,
+            business_connection_id="business_connection_id",
+        )
+
+    async def test_instance_method_verify_chat(self, monkeypatch, chat):
+        async def make_assertion(*_, **kwargs):
+            return (
+                kwargs["chat_id"] == chat.id
+                and kwargs["custom_description"] == "This is a custom description"
+            )
+
+        assert check_shortcut_signature(Chat.verify, Bot.verify_chat, ["chat_id"], [])
+        assert await check_shortcut_call(chat.verify, chat.get_bot(), "verify_chat")
+        assert await check_defaults_handling(chat.verify, chat.get_bot())
+
+        monkeypatch.setattr(chat.get_bot(), "verify_chat", make_assertion)
+        assert await chat.verify(
+            custom_description="This is a custom description",
+        )
+
+    async def test_instance_method_remove_chat_verification(self, monkeypatch, chat):
+        async def make_assertion(*_, **kwargs):
+            return kwargs["chat_id"] == chat.id
+
+        assert check_shortcut_signature(
+            Chat.remove_verification, Bot.remove_chat_verification, ["chat_id"], []
+        )
+        assert await check_shortcut_call(
+            chat.remove_verification, chat.get_bot(), "remove_chat_verification"
+        )
+        assert await check_defaults_handling(chat.remove_verification, chat.get_bot())
+
+        monkeypatch.setattr(chat.get_bot(), "remove_chat_verification", make_assertion)
+        assert await chat.remove_verification()
+
+    async def test_instance_method_read_business_message(self, monkeypatch, chat):
+        async def make_assertion(*_, **kwargs):
+            return (
+                kwargs["chat_id"] == chat.id
+                and kwargs["business_connection_id"] == "business_connection_id"
+                and kwargs["message_id"] == "message_id"
+            )
+
+        assert check_shortcut_signature(
+            Chat.read_business_message, Bot.read_business_message, ["chat_id"], []
+        )
+        assert await check_shortcut_call(
+            chat.read_business_message, chat.get_bot(), "read_business_message"
+        )
+        assert await check_defaults_handling(chat.read_business_message, chat.get_bot())
+
+        monkeypatch.setattr(chat.get_bot(), "read_business_message", make_assertion)
+        assert await chat.read_business_message(
+            message_id="message_id", business_connection_id="business_connection_id"
+        )
+
+    async def test_instance_method_approve_suggested_post(self, monkeypatch, chat):
+        async def make_assertion(*_, **kwargs):
+            return (
+                kwargs["chat_id"] == chat.id
+                and kwargs["message_id"] == "message_id"
+                and kwargs["send_date"] == "send_date"
+            )
+
+        assert check_shortcut_signature(
+            Chat.approve_suggested_post, Bot.approve_suggested_post, ["chat_id"], []
+        )
+        assert await check_shortcut_call(
+            chat.approve_suggested_post, chat.get_bot(), "approve_suggested_post"
+        )
+        assert await check_defaults_handling(chat.approve_suggested_post, chat.get_bot())
+
+        monkeypatch.setattr(chat.get_bot(), "approve_suggested_post", make_assertion)
+        assert await chat.approve_suggested_post(message_id="message_id", send_date="send_date")
+
+    async def test_instance_method_decline_suggested_post(self, monkeypatch, chat):
+        async def make_assertion(*_, **kwargs):
+            return (
+                kwargs["chat_id"] == chat.id
+                and kwargs["message_id"] == "message_id"
+                and kwargs["comment"] == "comment"
+            )
+
+        assert check_shortcut_signature(
+            Chat.decline_suggested_post, Bot.decline_suggested_post, ["chat_id"], []
+        )
+        assert await check_shortcut_call(
+            chat.decline_suggested_post, chat.get_bot(), "decline_suggested_post"
+        )
+        assert await check_defaults_handling(chat.decline_suggested_post, chat.get_bot())
+
+        monkeypatch.setattr(chat.get_bot(), "decline_suggested_post", make_assertion)
+        assert await chat.decline_suggested_post(message_id="message_id", comment="comment")
+
+    async def test_instance_method_repost_story(self, monkeypatch, chat):
+        async def make_assertion(*_, **kwargs):
+            return kwargs["from_chat_id"] == chat.id
+
+        assert check_shortcut_signature(
+            Chat.repost_story,
+            Bot.repost_story,
+            [
+                "from_chat_id",
+            ],
+            additional_kwargs=[],
+        )
+        assert await check_shortcut_call(
+            chat.repost_story,
+            chat.get_bot(),
+            "repost_story",
+            shortcut_kwargs=["from_chat_id"],
+        )
+        assert await check_defaults_handling(chat.repost_story, chat.get_bot())
+
+        monkeypatch.setattr(chat.get_bot(), "repost_story", make_assertion)
+        assert await chat.repost_story(
+            business_connection_id="bcid",
+            from_story_id=123,
+            active_period=3600,
+        )
+
+    async def test_instance_method_get_gifts(self, monkeypatch, chat):
+        async def make_assertion(*_, **kwargs):
+            return kwargs["chat_id"] == chat.id
+
+        assert check_shortcut_signature(Chat.get_gifts, Bot.get_chat_gifts, ["chat_id"], [])
+        assert await check_shortcut_call(chat.get_gifts, chat.get_bot(), "get_chat_gifts")
+        assert await check_defaults_handling(chat.get_gifts, chat.get_bot())
+
+        monkeypatch.setattr(chat.get_bot(), "get_chat_gifts", make_assertion)
+        assert await chat.get_gifts()
+
+    async def test_instance_method_set_chat_member_tag(self, monkeypatch, chat):
+        async def make_assertion(*_, **kwargs):
+            return (
+                kwargs["chat_id"] == chat.id
+                and kwargs["user_id"] == "user_id"
+                and kwargs["tag"] == "tag"
+            )
+
+        assert check_shortcut_signature(
+            Chat.set_chat_member_tag, Bot.set_chat_member_tag, ["chat_id"], []
+        )
+        assert await check_shortcut_call(
+            chat.set_chat_member_tag, chat.get_bot(), "set_chat_member_tag"
+        )
+        assert await check_defaults_handling(chat.set_chat_member_tag, chat.get_bot())
+
+        monkeypatch.setattr(chat.get_bot(), "set_chat_member_tag", make_assertion)
+        assert await chat.set_chat_member_tag(user_id="user_id", tag="tag")
 
     def test_mention_html(self):
         chat = Chat(id=1, type="foo")

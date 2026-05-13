@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # A library that provides a Python interface to the Telegram Bot API
-# Copyright (C) 2015-2024
+# Copyright (C) 2015-2026
 # Leandro Toledo de Souza <devs@python-telegram-bot.org>
 #
 # This program is free software: you can redistribute it and/or modify
@@ -49,47 +49,7 @@ from tests.auxil.files import data_file
 from tests.auxil.slots import mro_slots
 
 
-@pytest.fixture()
-def sticker_file():
-    with data_file("telegram.webp").open("rb") as file:
-        yield file
-
-
-@pytest.fixture(scope="module")
-async def sticker(bot, chat_id):
-    with data_file("telegram.webp").open("rb") as f:
-        sticker = (await bot.send_sticker(chat_id, sticker=f, read_timeout=50)).sticker
-        # necessary to properly test needs_repainting
-        with sticker._unfrozen():
-            sticker.needs_repainting = TestStickerBase.needs_repainting
-        return sticker
-
-
-@pytest.fixture()
-def animated_sticker_file():
-    with data_file("telegram_animated_sticker.tgs").open("rb") as f:
-        yield f
-
-
-@pytest.fixture(scope="module")
-async def animated_sticker(bot, chat_id):
-    with data_file("telegram_animated_sticker.tgs").open("rb") as f:
-        return (await bot.send_sticker(chat_id, sticker=f, read_timeout=50)).sticker
-
-
-@pytest.fixture()
-def video_sticker_file():
-    with data_file("telegram_video_sticker.webm").open("rb") as f:
-        yield f
-
-
-@pytest.fixture(scope="module")
-def video_sticker(bot, chat_id):
-    with data_file("telegram_video_sticker.webm").open("rb") as f:
-        return bot.send_sticker(chat_id, sticker=f, timeout=50).sticker
-
-
-class TestStickerBase:
+class StickerTestBase:
     # sticker_file_url = 'https://python-telegram-bot.org/static/testfiles/telegram.webp'
     # Serving sticker from gh since our server sends wrong content_type
     sticker_file_url = (
@@ -116,7 +76,7 @@ class TestStickerBase:
     premium_animation = File("this_is_an_id", "this_is_an_unique_id")
 
 
-class TestStickerWithoutRequest(TestStickerBase):
+class TestStickerWithoutRequest(StickerTestBase):
     def test_slot_behaviour(self, sticker):
         for attr in sticker.__slots__:
             assert getattr(sticker, attr, "err") != "err", f"got extra slot '{attr}'"
@@ -165,7 +125,7 @@ class TestStickerWithoutRequest(TestStickerBase):
         assert sticker_dict["type"] == sticker.type
         assert sticker_dict["needs_repainting"] == sticker.needs_repainting
 
-    def test_de_json(self, bot, sticker):
+    def test_de_json(self, offline_bot, sticker):
         json_dict = {
             "file_id": self.sticker_file_id,
             "file_unique_id": self.sticker_file_unique_id,
@@ -181,7 +141,7 @@ class TestStickerWithoutRequest(TestStickerBase):
             "custom_emoji_id": self.custom_emoji_id,
             "needs_repainting": self.needs_repainting,
         }
-        json_sticker = Sticker.de_json(json_dict, bot)
+        json_sticker = Sticker.de_json(json_dict, offline_bot)
         assert json_sticker.api_kwargs == {}
 
         assert json_sticker.file_id == self.sticker_file_id
@@ -284,22 +244,24 @@ class TestStickerWithoutRequest(TestStickerBase):
         assert a != e
         assert hash(a) != hash(e)
 
-    async def test_error_without_required_args(self, bot, chat_id):
+    async def test_error_without_required_args(self, offline_bot, chat_id):
         with pytest.raises(TypeError):
-            await bot.send_sticker(chat_id)
+            await offline_bot.send_sticker(chat_id)
 
-    async def test_send_with_sticker(self, monkeypatch, bot, chat_id, sticker):
+    async def test_send_with_sticker(self, monkeypatch, offline_bot, chat_id, sticker):
         async def make_assertion(url, request_data: RequestData, *args, **kwargs):
             return request_data.json_parameters["sticker"] == sticker.file_id
 
-        monkeypatch.setattr(bot.request, "post", make_assertion)
-        assert await bot.send_sticker(sticker=sticker, chat_id=chat_id)
+        monkeypatch.setattr(offline_bot.request, "post", make_assertion)
+        assert await offline_bot.send_sticker(sticker=sticker, chat_id=chat_id)
 
     @pytest.mark.parametrize("local_mode", [True, False])
-    async def test_send_sticker_local_files(self, monkeypatch, bot, chat_id, local_mode):
+    async def test_send_sticker_local_files(
+        self, dummy_message_dict, monkeypatch, offline_bot, chat_id, local_mode
+    ):
         try:
-            bot._local_mode = local_mode
-            # For just test that the correct paths are passed as we have no local bot API set up
+            offline_bot._local_mode = local_mode
+            # For just test that the correct paths are passed as we have no local Bot API set up
             test_flag = False
             file = data_file("telegram.jpg")
             expected = file.as_uri()
@@ -310,12 +272,13 @@ class TestStickerWithoutRequest(TestStickerBase):
                     test_flag = data.get("sticker") == expected
                 else:
                     test_flag = isinstance(data.get("sticker"), InputFile)
+                return dummy_message_dict
 
-            monkeypatch.setattr(bot, "_post", make_assertion)
-            await bot.send_sticker(chat_id, file)
+            monkeypatch.setattr(offline_bot, "_post", make_assertion)
+            await offline_bot.send_sticker(chat_id, file)
             assert test_flag
         finally:
-            bot._local_mode = False
+            offline_bot._local_mode = False
 
     @pytest.mark.parametrize(
         ("default_bot", "custom"),
@@ -345,7 +308,7 @@ class TestStickerWithoutRequest(TestStickerBase):
         )
 
 
-class TestStickerWithRequest(TestStickerBase):
+class TestStickerWithRequest(StickerTestBase):
     async def test_send_all_args(self, bot, chat_id, sticker_file, sticker):
         message = await bot.send_sticker(
             chat_id, sticker=sticker_file, disable_notification=False, protect_content=True
@@ -456,7 +419,7 @@ class TestStickerWithRequest(TestStickerBase):
             )
             assert message.reply_to_message is None
         else:
-            with pytest.raises(BadRequest, match="Message to reply not found"):
+            with pytest.raises(BadRequest, match="Message to be replied not found"):
                 await default_bot.send_sticker(
                     chat_id, sticker, reply_to_message_id=reply_to_message.message_id
                 )
@@ -471,7 +434,6 @@ class TestStickerWithRequest(TestStickerBase):
         assert protected.has_protected_content
         assert not unprotected.has_protected_content
 
-    @pytest.mark.xfail(reason="API 7.2 incompatibility, see #4181")
     async def test_premium_animation(self, bot):
         # testing animation sucks a bit since we can't create a premium sticker. What we can do is
         # get a sticker set which includes a premium sticker and check that specific one.
@@ -489,7 +451,6 @@ class TestStickerWithRequest(TestStickerBase):
         }
         assert premium_sticker.premium_animation.to_dict() == premium_sticker_dict
 
-    @pytest.mark.xfail(reason="API 7.2 incompatibility, see #4181")
     async def test_custom_emoji(self, bot):
         # testing custom emoji stickers is as much of an annoyance as the premium animation, see
         # in test_premium_animation
@@ -526,104 +487,54 @@ class TestStickerWithRequest(TestStickerBase):
             await bot.send_sticker(chat_id, "")
 
 
-@pytest.fixture()
-async def sticker_set(bot):
-    pytest.xfail(reason="API 7.2 incompatibility, see #4181")
-    ss = await bot.get_sticker_set(f"test_by_{bot.username}")
-    if len(ss.stickers) > 100:
-        try:
-            for i in range(1, 50):
-                await bot.delete_sticker_from_set(ss.stickers[-i].file_id)
-        except BadRequest as e:
-            if e.message == "Stickerset_not_modified":
-                return ss
-            raise Exception("stickerset is growing too large.") from None
-    return ss
-
-
-@pytest.fixture()
-async def animated_sticker_set(bot):
-    pytest.xfail(reason="API 7.2 incompatibility, see #4181")
-    ss = await bot.get_sticker_set(f"animated_test_by_{bot.username}")
-    if len(ss.stickers) > 100:
-        try:
-            for i in range(1, 50):
-                await bot.delete_sticker_from_set(ss.stickers[-i].file_id)
-        except BadRequest as e:
-            if e.message == "Stickerset_not_modified":
-                return ss
-            raise Exception("stickerset is growing too large.") from None
-    return ss
-
-
-@pytest.fixture()
-async def video_sticker_set(bot):
-    ss = await bot.get_sticker_set(f"video_test_by_{bot.username}")
-    if len(ss.stickers) > 100:
-        try:
-            for i in range(1, 50):
-                await bot.delete_sticker_from_set(ss.stickers[-i].file_id)
-        except BadRequest as e:
-            if e.message == "Stickerset_not_modified":
-                return ss
-            raise Exception("stickerset is growing too large.") from None
-    return ss
-
-
-@pytest.fixture()
-def sticker_set_thumb_file():
-    with data_file("sticker_set_thumb.png").open("rb") as file:
-        yield file
-
-
-class TestStickerSetBase:
+class StickerSetTestBase:
     title = "Test stickers"
-    is_animated = True
-    is_video = True
     stickers = [Sticker("file_id", "file_un_id", 512, 512, True, True, Sticker.REGULAR)]
     name = "NOTAREALNAME"
     sticker_type = Sticker.REGULAR
     contains_masks = True
+    thumbnail = PhotoSize("thumb_file_id", "thumb_file_un_id", 100, 100, False)
 
 
-class TestStickerSetWithoutRequest(TestStickerSetBase):
+class TestStickerSetWithoutRequest(StickerSetTestBase):
     def test_slot_behaviour(self):
-        inst = StickerSet("this", "is", True, self.stickers, True, "not")
+        inst = StickerSet("this", "is", self.stickers, "not")
         for attr in inst.__slots__:
             assert getattr(inst, attr, "err") != "err", f"got extra slot '{attr}'"
         assert len(mro_slots(inst)) == len(set(mro_slots(inst))), "duplicate slot"
 
-    def test_de_json(self, bot, sticker):
-        name = f"test_by_{bot.username}"
+    def test_de_json(self, offline_bot, sticker):
+        name = f"test_by_{offline_bot.username}"
         json_dict = {
             "name": name,
             "title": self.title,
-            "is_animated": self.is_animated,
-            "is_video": self.is_video,
             "stickers": [x.to_dict() for x in self.stickers],
             "thumbnail": sticker.thumbnail.to_dict(),
             "sticker_type": self.sticker_type,
             "contains_masks": self.contains_masks,
         }
-        sticker_set = StickerSet.de_json(json_dict, bot)
+        sticker_set = StickerSet.de_json(json_dict, offline_bot)
 
         assert sticker_set.name == name
         assert sticker_set.title == self.title
-        assert sticker_set.is_animated == self.is_animated
-        assert sticker_set.is_video == self.is_video
         assert sticker_set.stickers == tuple(self.stickers)
         assert sticker_set.thumbnail == sticker.thumbnail
         assert sticker_set.sticker_type == self.sticker_type
         assert sticker_set.api_kwargs == {"contains_masks": self.contains_masks}
 
-    def test_sticker_set_to_dict(self, sticker_set):
+    def test_sticker_set_to_dict(self):
+        sticker_set = StickerSet(
+            self.name,
+            self.title,
+            self.stickers,
+            self.sticker_type,
+            thumbnail=self.thumbnail,
+        )
         sticker_set_dict = sticker_set.to_dict()
 
         assert isinstance(sticker_set_dict, dict)
         assert sticker_set_dict["name"] == sticker_set.name
         assert sticker_set_dict["title"] == sticker_set.title
-        assert sticker_set_dict["is_animated"] == sticker_set.is_animated
-        assert sticker_set_dict["is_video"] == sticker_set.is_video
         assert sticker_set_dict["stickers"][0] == sticker_set.stickers[0].to_dict()
         assert sticker_set_dict["thumbnail"] == sticker_set.thumbnail.to_dict()
         assert sticker_set_dict["sticker_type"] == sticker_set.sticker_type
@@ -632,26 +543,20 @@ class TestStickerSetWithoutRequest(TestStickerSetBase):
         a = StickerSet(
             self.name,
             self.title,
-            self.is_animated,
             self.stickers,
-            self.is_video,
             self.sticker_type,
         )
         b = StickerSet(
             self.name,
             self.title,
-            self.is_animated,
             self.stickers,
-            self.is_video,
             self.sticker_type,
         )
-        c = StickerSet(self.name, "title", False, [], True, Sticker.CUSTOM_EMOJI)
+        c = StickerSet(self.name, "title", [], Sticker.CUSTOM_EMOJI)
         d = StickerSet(
             "blah",
             self.title,
-            self.is_animated,
             self.stickers,
-            self.is_video,
             self.sticker_type,
         )
         e = Audio(self.name, "", 0, None, None)
@@ -671,11 +576,11 @@ class TestStickerSetWithoutRequest(TestStickerSetBase):
 
     @pytest.mark.parametrize("local_mode", [True, False])
     async def test_upload_sticker_file_local_files(
-        self, monkeypatch, bot, chat_id, local_mode, recwarn
+        self, monkeypatch, offline_bot, chat_id, local_mode, recwarn
     ):
         try:
-            bot._local_mode = local_mode
-            # For just test that the correct paths are passed as we have no local bot API set up
+            offline_bot._local_mode = local_mode
+            # For just test that the correct paths are passed as we have no local Bot API set up
             test_flag = False
             file = data_file("telegram.jpg")
             expected = file.as_uri()
@@ -687,23 +592,26 @@ class TestStickerSetWithoutRequest(TestStickerSetBase):
                     if local_mode
                     else isinstance(data.get("sticker"), InputFile)
                 )
+                return File(file_id="file_id", file_unique_id="file_unique_id").to_dict()
 
-            monkeypatch.setattr(bot, "_post", make_assertion)
-            await bot.upload_sticker_file(chat_id, sticker=file, sticker_format="static")
+            monkeypatch.setattr(offline_bot, "_post", make_assertion)
+            await offline_bot.upload_sticker_file(
+                chat_id, sticker=file, sticker_format=StickerFormat.STATIC
+            )
             assert test_flag
         finally:
-            bot._local_mode = False
+            offline_bot._local_mode = False
 
     @pytest.mark.parametrize("local_mode", [True, False])
     async def test_create_new_sticker_set_local_files(
         self,
         monkeypatch,
-        bot,
+        offline_bot,
         chat_id,
         local_mode,
     ):
-        monkeypatch.setattr(bot, "_local_mode", local_mode)
-        # For just test that the correct paths are passed as we have no local bot API set up
+        monkeypatch.setattr(offline_bot, "_local_mode", local_mode)
+        # For just test that the correct paths are passed as we have no local Bot API set up
         test_flag = False
         file = data_file("telegram.jpg")
         # always assumed to be local mode because we don't have access to local_mode setting
@@ -714,39 +622,40 @@ class TestStickerSetWithoutRequest(TestStickerSetBase):
             nonlocal test_flag
             test_flag = data.get("stickers")[0].sticker == expected
 
-        monkeypatch.setattr(bot, "_post", make_assertion)
-        await bot.create_new_sticker_set(
+        monkeypatch.setattr(offline_bot, "_post", make_assertion)
+        await offline_bot.create_new_sticker_set(
             chat_id,
             "name",
             "title",
-            stickers=[InputSticker(file, emoji_list=["emoji"])],
-            sticker_format=StickerFormat.STATIC,
+            stickers=[InputSticker(file, emoji_list=["emoji"], format=StickerFormat.STATIC)],
         )
         assert test_flag
 
-    async def test_create_new_sticker_all_params(self, monkeypatch, bot, chat_id, mask_position):
+    async def test_create_new_sticker_all_params(
+        self, monkeypatch, offline_bot, chat_id, mask_position
+    ):
         async def make_assertion(_, data, *args, **kwargs):
             assert data["user_id"] == chat_id
             assert data["name"] == "name"
             assert data["title"] == "title"
             assert data["stickers"] == ["wow.png", "wow.tgs", "wow.webp"]
-            assert data["sticker_format"] == "static"
             assert data["needs_repainting"] is True
 
-        monkeypatch.setattr(bot, "_post", make_assertion)
-        await bot.create_new_sticker_set(
+        monkeypatch.setattr(offline_bot, "_post", make_assertion)
+        await offline_bot.create_new_sticker_set(
             chat_id,
             "name",
             "title",
             stickers=["wow.png", "wow.tgs", "wow.webp"],
-            sticker_format=StickerFormat.STATIC,
             needs_repainting=True,
         )
 
     @pytest.mark.parametrize("local_mode", [True, False])
-    async def test_add_sticker_to_set_local_files(self, monkeypatch, bot, chat_id, local_mode):
-        monkeypatch.setattr(bot, "_local_mode", local_mode)
-        # For just test that the correct paths are passed as we have no local bot API set up
+    async def test_add_sticker_to_set_local_files(
+        self, monkeypatch, offline_bot, chat_id, local_mode
+    ):
+        monkeypatch.setattr(offline_bot, "_local_mode", local_mode)
+        # For just test that the correct paths are passed as we have no local Bot API set up
         test_flag = False
         file = data_file("telegram.jpg")
         # always assumed to be local mode because we don't have access to local_mode setting
@@ -757,19 +666,21 @@ class TestStickerSetWithoutRequest(TestStickerSetBase):
             nonlocal test_flag
             test_flag = data.get("sticker").sticker == expected
 
-        monkeypatch.setattr(bot, "_post", make_assertion)
-        await bot.add_sticker_to_set(
-            chat_id, "name", sticker=InputSticker(sticker=file, emoji_list=["this"])
+        monkeypatch.setattr(offline_bot, "_post", make_assertion)
+        await offline_bot.add_sticker_to_set(
+            chat_id,
+            "name",
+            sticker=InputSticker(sticker=file, emoji_list=["this"], format="static"),
         )
         assert test_flag
 
     @pytest.mark.parametrize("local_mode", [True, False])
     async def test_set_sticker_set_thumbnail_local_files(
-        self, monkeypatch, bot, chat_id, local_mode
+        self, monkeypatch, offline_bot, chat_id, local_mode
     ):
         try:
-            bot._local_mode = local_mode
-            # For just test that the correct paths are passed as we have no local bot API set up
+            offline_bot._local_mode = local_mode
+            # For just test that the correct paths are passed as we have no local Bot API set up
             test_flag = False
             file = data_file("telegram.jpg")
             expected = file.as_uri()
@@ -781,11 +692,13 @@ class TestStickerSetWithoutRequest(TestStickerSetBase):
                 else:
                     test_flag = isinstance(data.get("thumbnail"), InputFile)
 
-            monkeypatch.setattr(bot, "_post", make_assertion)
-            await bot.set_sticker_set_thumbnail("name", chat_id, thumbnail=file)
+            monkeypatch.setattr(offline_bot, "_post", make_assertion)
+            await offline_bot.set_sticker_set_thumbnail(
+                "name", chat_id, thumbnail=file, format="static"
+            )
             assert test_flag
         finally:
-            bot._local_mode = False
+            offline_bot._local_mode = False
 
     async def test_get_file_instance_method(self, monkeypatch, sticker):
         async def make_assertion(*_, **kwargs):
@@ -798,54 +711,135 @@ class TestStickerSetWithoutRequest(TestStickerSetBase):
         monkeypatch.setattr(sticker.get_bot(), "get_file", make_assertion)
         assert await sticker.get_file()
 
+    async def test_delete_sticker_from_set_sticker_input(self, offline_bot, sticker, monkeypatch):
+        async def make_assertion(url, request_data: RequestData, *args, **kwargs):
+            return request_data.json_parameters["sticker"] == sticker.file_id
 
-@pytest.mark.xdist_group("stickerset")
-@pytest.mark.xfail(reason="API 7.2 incompatibility, see #4181")
-class TestStickerSetWithRequest:
-    async def test_create_sticker_set(
-        self, bot, chat_id, sticker_file, animated_sticker_file, video_sticker_file
+        monkeypatch.setattr(offline_bot.request, "post", make_assertion)
+        assert await offline_bot.delete_sticker_from_set(sticker)
+
+    async def test_replace_sticker_in_set_sticker_input(self, offline_bot, sticker, monkeypatch):
+        async def make_assertion(url, request_data: RequestData, *args, **kwargs):
+            return request_data.json_parameters["old_sticker"] == sticker.file_id
+
+        monkeypatch.setattr(offline_bot.request, "post", make_assertion)
+        assert await offline_bot.replace_sticker_in_set(
+            user_id=1, name="name", sticker="sticker", old_sticker=sticker
+        )
+
+    async def test_set_sticker_emoji_list_sticker_input(self, offline_bot, sticker, monkeypatch):
+        async def make_assertion(url, request_data: RequestData, *args, **kwargs):
+            return request_data.json_parameters["sticker"] == sticker.file_id
+
+        monkeypatch.setattr(offline_bot.request, "post", make_assertion)
+        assert await offline_bot.set_sticker_emoji_list(sticker, ["emoji"])
+
+    async def test_set_sticker_mask_position_sticker_input(
+        self, offline_bot, sticker, monkeypatch
     ):
-        """Creates the sticker set (if needed) which is required for tests. Make sure that this
-        test comes before the tests that actually use the sticker sets!
+        async def make_assertion(url, request_data: RequestData, *args, **kwargs):
+            return request_data.json_parameters["sticker"] == sticker.file_id
+
+        monkeypatch.setattr(offline_bot.request, "post", make_assertion)
+        assert await offline_bot.set_sticker_mask_position(sticker, MaskPosition("eyes", 1, 2, 3))
+
+    async def test_set_sticker_position_in_set_sticker_input(
+        self, offline_bot, sticker, monkeypatch
+    ):
+        async def make_assertion(url, request_data: RequestData, *args, **kwargs):
+            return request_data.json_parameters["sticker"] == sticker.file_id
+
+        monkeypatch.setattr(offline_bot.request, "post", make_assertion)
+        assert await offline_bot.set_sticker_position_in_set(sticker, 1)
+
+    async def test_set_sticker_keywords_sticker_input(self, offline_bot, sticker, monkeypatch):
+        async def make_assertion(url, request_data: RequestData, *args, **kwargs):
+            return request_data.json_parameters["sticker"] == sticker.file_id
+
+        monkeypatch.setattr(offline_bot.request, "post", make_assertion)
+        assert await offline_bot.set_sticker_keywords(sticker, ["keyword"])
+
+
+class TestStickerSetWithRequest:
+    # In-process guard: once a worker has set up its own sticker set, skip on subsequent tests.
+    _WORKER_CREATED_STICKER_SET = False
+
+    @pytest.fixture(autouse=True)
+    async def _create_sticker_set(
+        self,
+        bot,
+        chat_id,
+        sticker_file,
+        animated_sticker_file,
+        video_sticker_file,
+        sticker_set_name,
+        worker_id,
+    ):
+        """Creates the sticker set (if needed) which is required for all tests below. Runs exactly
+        once during setup for every xdist worker, so we don't have to worry about the sticker set
+        not being there for the tests that need it.
         """
-        test_by = f"test_by_{bot.username}"
-        for sticker_set in [test_by, f"animated_{test_by}", f"video_{test_by}"]:
-            try:
-                ss = await bot.get_sticker_set(sticker_set)
-                assert isinstance(ss, StickerSet)
-            except BadRequest as e:
-                if not e.message == "Stickerset_invalid":
-                    raise e
+        if self._WORKER_CREATED_STICKER_SET:
+            return
 
-                if sticker_set.startswith(test_by):
-                    s = await bot.create_new_sticker_set(
-                        chat_id,
-                        name=sticker_set,
-                        title="Sticker Test",
-                        stickers=[InputSticker(sticker_file, emoji_list=["😄"])],
-                        sticker_format=StickerFormat.STATIC,
-                    )
-                    assert s
-                elif sticker_set.startswith("animated"):
-                    a = await bot.create_new_sticker_set(
-                        chat_id,
-                        name=sticker_set,
-                        title="Animated Test",
-                        stickers=[InputSticker(animated_sticker_file, emoji_list=["😄"])],
-                        sticker_format=StickerFormat.ANIMATED,
-                    )
-                    assert a
-                elif sticker_set.startswith("video"):
-                    v = await bot.create_new_sticker_set(
-                        chat_id,
-                        name=sticker_set,
-                        title="Video Test",
-                        stickers=[InputSticker(video_sticker_file, emoji_list=["😄"])],
-                        sticker_format=StickerFormat.VIDEO,
-                    )
-                    assert v
+        try:
+            ss = await bot.get_sticker_set(sticker_set_name)
+            assert isinstance(ss, StickerSet)
 
-    async def test_delete_sticker_set(self, bot, chat_id, sticker_file):
+            if len(ss.stickers) > 100:
+                try:
+                    await asyncio.gather(
+                        *[bot.delete_sticker_from_set(s.file_id) for s in ss.stickers[:-50]]
+                    )
+                except BadRequest as e:
+                    if e.message != "Stickerset_not_modified":
+                        raise Exception("stickerset is growing too large.") from None
+        except BadRequest as e:
+            if e.message != "Stickerset_invalid":
+                raise e
+
+            await asyncio.sleep(1)  # Avoid floods
+            s = await bot.create_new_sticker_set(
+                chat_id,
+                name=sticker_set_name,
+                title="Mixed Sticker Tests",
+                stickers=[
+                    InputSticker(
+                        data_file("telegram.webp").open("rb"),
+                        emoji_list=["😄"],
+                        format=StickerFormat.STATIC,
+                    ),
+                    InputSticker(
+                        data_file("telegram_animated_sticker.tgs").open("rb"),
+                        emoji_list=["😄", "⭐"],
+                        format=StickerFormat.ANIMATED,
+                    ),
+                    # works:
+                    InputSticker(
+                        data_file("telegram_video_sticker.webm").open("rb"),
+                        emoji_list=["😄", "🔥"],
+                        format=StickerFormat.VIDEO,
+                    ),
+                ],
+                sticker_type="regular",
+            )
+            assert s
+            await asyncio.sleep(2)  # Avoid floods
+
+        TestStickerSetWithRequest._WORKER_CREATED_STICKER_SET = True
+
+    @pytest.fixture
+    def sticker_set_name(self, bot, worker_id):
+        """Returns the name of this worker's own sticker set."""
+        safe_worker_id = worker_id.replace("-", "_")
+        return f"{safe_worker_id}_test_by_{bot.username}"
+
+    @pytest.fixture
+    async def worker_sticker_set(self, bot, sticker_set_name):
+        """Fetches and returns this worker's own sticker set."""
+        return await bot.get_sticker_set(sticker_set_name)
+
+    async def test_delete_sticker_set(self, bot, chat_id, sticker_file, sticker_set_name):
         # there is currently an issue in the API where this function claims it successfully
         # creates an already deleted sticker set while it does not. This happens when calling it
         # too soon after deleting the set. This then leads to delete_sticker_set failing since the
@@ -855,8 +849,7 @@ class TestStickerSetWithRequest:
             chat_id,
             name=name,
             title="Stickerset delete Test",
-            stickers=[InputSticker(sticker_file, emoji_list=["😄"])],
-            sticker_format=StickerFormat.STATIC,
+            stickers=[InputSticker(sticker_file, emoji_list=["😄"], format="static")],
         )
         # this prevents a second issue when calling delete too soon after creating the set leads
         # to it failing as well
@@ -864,9 +857,10 @@ class TestStickerSetWithRequest:
         assert await bot.delete_sticker_set(name)
 
     async def test_set_custom_emoji_sticker_set_thumbnail(
-        self, bot, chat_id, animated_sticker_file
+        self, bot, chat_id, animated_sticker_file, worker_id
     ):
-        ss_name = f"custom_emoji_set_by_{bot.username}"
+        safe_worker_id = worker_id.replace("-", "_")
+        ss_name = f"{safe_worker_id}_custom_emoji_set_by_{bot.username}"
         try:
             ss = await bot.get_sticker_set(ss_name)
             assert ss.sticker_type == Sticker.CUSTOM_EMOJI
@@ -875,14 +869,24 @@ class TestStickerSetWithRequest:
                 chat_id,
                 name=ss_name,
                 title="Custom Emoji Sticker Set",
-                stickers=[InputSticker(animated_sticker_file, emoji_list=["😄"])],
-                sticker_format=StickerFormat.ANIMATED,
+                stickers=[
+                    InputSticker(
+                        animated_sticker_file, emoji_list=["😄"], format=StickerFormat.ANIMATED
+                    )
+                ],
                 sticker_type=Sticker.CUSTOM_EMOJI,
             )
         assert await bot.set_custom_emoji_sticker_set_thumbnail(ss_name, "")
 
-    # Test add_sticker_to_set
-    async def test_bot_methods_1_png(self, bot, chat_id, sticker_file):
+    async def test_add_sticker_to_set(
+        self,
+        bot,
+        chat_id,
+        sticker_file,
+        video_sticker_file,
+        animated_sticker_file,
+        sticker_set_name,
+    ):
         with data_file("telegram_sticker.png").open("rb") as f:
             # chat_id was hardcoded as 95205500 but it stopped working for some reason
             file = await bot.upload_sticker_file(
@@ -891,77 +895,65 @@ class TestStickerSetWithRequest:
         assert file
 
         await asyncio.sleep(1)
-        tasks = asyncio.gather(
-            bot.add_sticker_to_set(
-                chat_id,
-                f"test_by_{bot.username}",
-                sticker=InputSticker(sticker=file.file_id, emoji_list=["😄"]),
-            ),
-            bot.add_sticker_to_set(  # Also test with file input and mask
-                chat_id,
-                f"test_by_{bot.username}",
-                sticker=InputSticker(
-                    sticker=sticker_file,
-                    emoji_list=["😄"],
-                    mask_position=MaskPosition(MaskPosition.EYES, -1, 1, 2),
-                ),
+
+        assert await bot.add_sticker_to_set(
+            chat_id,
+            sticker_set_name,
+            sticker=InputSticker(
+                sticker=file.file_id, emoji_list=["😄"], format=StickerFormat.STATIC
             ),
         )
-        assert all(await tasks)
-
-    async def test_bot_methods_1_tgs(self, bot, chat_id):
+        await asyncio.sleep(1)
+        assert await bot.add_sticker_to_set(  # Also test with file input and mask
+            chat_id,
+            sticker_set_name,
+            sticker=InputSticker(
+                sticker=data_file("telegram.webp").open("rb"),
+                emoji_list=["😄"],
+                mask_position=MaskPosition(MaskPosition.EYES, -1, 1, 2),
+                format=StickerFormat.STATIC,
+            ),
+        )
         await asyncio.sleep(1)
         assert await bot.add_sticker_to_set(
             chat_id,
-            f"animated_test_by_{bot.username}",
+            sticker_set_name,
             sticker=InputSticker(
-                sticker=data_file("telegram_animated_sticker.tgs").open("rb"), emoji_list=["😄"]
+                sticker=data_file("telegram_animated_sticker.tgs").open("rb"),
+                emoji_list=["😄"],
+                format=StickerFormat.ANIMATED,
+            ),
+        )
+        await asyncio.sleep(1)
+        assert await bot.add_sticker_to_set(
+            chat_id,
+            sticker_set_name,
+            sticker=InputSticker(
+                sticker=data_file("telegram_video_sticker.webm").open("rb"),
+                emoji_list=["🤔"],
+                format=StickerFormat.VIDEO,
             ),
         )
 
-    async def test_bot_methods_1_webm(self, bot, chat_id):
+    async def test_sticker_position_in_set(self, bot, worker_sticker_set):
         await asyncio.sleep(1)
-        with data_file("telegram_video_sticker.webm").open("rb") as f:
-            assert await bot.add_sticker_to_set(
-                chat_id,
-                f"video_test_by_{bot.username}",
-                sticker=InputSticker(sticker=f, emoji_list=["🤔"]),
-            )
-
-    # Test set_sticker_position_in_set
-    async def test_bot_methods_2_png(self, bot, sticker_set):
-        await asyncio.sleep(1)
-        file_id = sticker_set.stickers[0].file_id
+        file_id = worker_sticker_set.stickers[0].file_id
         assert await bot.set_sticker_position_in_set(file_id, 1)
 
-    async def test_bot_methods_2_tgs(self, bot, animated_sticker_set):
-        await asyncio.sleep(1)
-        file_id = animated_sticker_set.stickers[0].file_id
-        assert await bot.set_sticker_position_in_set(file_id, 1)
-
-    async def test_bot_methods_2_webm(self, bot, video_sticker_set):
-        await asyncio.sleep(1)
-        file_id = video_sticker_set.stickers[0].file_id
-        assert await bot.set_sticker_position_in_set(file_id, 1)
-
-    # Test set_sticker_set_thumb
-    async def test_bot_methods_3_png(self, bot, chat_id, sticker_set_thumb_file):
-        await asyncio.sleep(1)
-        assert await bot.set_sticker_set_thumbnail(
-            f"test_by_{bot.username}", chat_id, sticker_set_thumb_file
-        )
-
-    async def test_bot_methods_3_tgs(
-        self, bot, chat_id, animated_sticker_file, animated_sticker_set
+    async def test_sticker_set_thumbnail(
+        self, bot, chat_id, sticker_set_thumb_file, animated_sticker_file, sticker_set_name
     ):
         await asyncio.sleep(1)
-        animated_test = f"animated_test_by_{bot.username}"
-        file_id = animated_sticker_set.stickers[-1].file_id
-        tasks = asyncio.gather(
-            bot.set_sticker_set_thumbnail(animated_test, chat_id, animated_sticker_file),
-            bot.set_sticker_set_thumbnail(animated_test, chat_id, file_id),
+        assert await bot.set_sticker_set_thumbnail(
+            sticker_set_name, chat_id, format="static", thumbnail=sticker_set_thumb_file
         )
-        assert all(await tasks)
+        await asyncio.sleep(1)
+        assert await bot.set_sticker_set_thumbnail(
+            sticker_set_name,
+            chat_id,
+            "animated",
+            thumbnail=animated_sticker_file,
+        )
 
     # TODO: Try the below by creating a custom .webm and not by downloading another pack's thumb
     @pytest.mark.skip(
@@ -971,110 +963,79 @@ class TestStickerSetWithRequest:
     def test_bot_methods_3_webm(self, bot, chat_id, video_sticker_file, video_sticker_set):
         pass
 
-    # Test delete_sticker_from_set
-    async def test_bot_methods_4_png(self, bot, sticker_set):
-        if len(sticker_set.stickers) <= 1:
+    async def test_delete_sticker_from_set(self, bot, worker_sticker_set):
+        if len(worker_sticker_set.stickers) <= 1:
             pytest.skip("Sticker set only has one sticker, deleting it will delete the set.")
         await asyncio.sleep(1)
-        file_id = sticker_set.stickers[-1].file_id
+        file_id = worker_sticker_set.stickers[-1].file_id
         assert await bot.delete_sticker_from_set(file_id)
 
-    async def test_bot_methods_4_tgs(self, bot, animated_sticker_set):
-        if len(animated_sticker_set.stickers) <= 1:
-            pytest.skip("Sticker set only has one sticker, deleting it will delete the set.")
-        await asyncio.sleep(1)
-        file_id = animated_sticker_set.stickers[-1].file_id
-        assert await bot.delete_sticker_from_set(file_id)
-
-    async def test_bot_methods_4_webm(self, bot, video_sticker_set):
-        if len(video_sticker_set.stickers) <= 1:
-            pytest.skip("Sticker set only has one sticker, deleting it will delete the set.")
-        await asyncio.sleep(1)
-        file_id = video_sticker_set.stickers[-1].file_id
-        assert await bot.delete_sticker_from_set(file_id)
-
-    # Test set_sticker_emoji_list. It has been found that the first emoji in the list is the one
+    # It has been found that the first emoji in the list is the one
     # that is used in `Sticker.emoji` as string (which is returned in `get_sticker_set`)
-    async def test_bot_methods_5_png(self, bot, sticker_set):
-        file_id = sticker_set.stickers[-1].file_id
+    async def test_set_sticker_emoji_list(self, bot, worker_sticker_set, sticker_set_name):
+        file_id = worker_sticker_set.stickers[-1].file_id
         assert await bot.set_sticker_emoji_list(file_id, ["😔", "😟"])
-        ss = await bot.get_sticker_set(f"test_by_{bot.username}")
+        ss = await bot.get_sticker_set(sticker_set_name)
         assert ss.stickers[-1].emoji == "😔"
 
-    async def test_bot_methods_5_tgs(self, bot, animated_sticker_set):
-        file_id = animated_sticker_set.stickers[-1].file_id
-        assert await bot.set_sticker_emoji_list(file_id, ["😔", "😟"])
-        ss = await bot.get_sticker_set(f"animated_test_by_{bot.username}")
-        assert ss.stickers[-1].emoji == "😔"
-
-    async def test_bot_methods_5_webm(self, bot, video_sticker_set):
-        file_id = video_sticker_set.stickers[-1].file_id
-        assert await bot.set_sticker_emoji_list(file_id, ["😔", "😟"])
-        ss = await bot.get_sticker_set(f"video_test_by_{bot.username}")
-        assert ss.stickers[-1].emoji == "😔"
-
-    # Test set_sticker_set_title.
-    async def test_bot_methods_6_png(self, bot):
-        assert await bot.set_sticker_set_title(f"test_by_{bot.username}", "new title")
-        ss = await bot.get_sticker_set(f"test_by_{bot.username}")
+    async def test_sticker_set_title(self, bot, sticker_set_name):
+        assert await bot.set_sticker_set_title(sticker_set_name, "new title")
+        ss = await bot.get_sticker_set(sticker_set_name)
         assert ss.title == "new title"
 
-    async def test_bot_methods_6_tgs(self, bot):
-        assert await bot.set_sticker_set_title(f"animated_test_by_{bot.username}", "new title")
-        ss = await bot.get_sticker_set(f"animated_test_by_{bot.username}")
-        assert ss.title == "new title"
-
-    async def test_bot_methods_6_webm(self, bot):
-        assert await bot.set_sticker_set_title(f"video_test_by_{bot.username}", "new title")
-        ss = await bot.get_sticker_set(f"video_test_by_{bot.username}")
-        assert ss.title == "new title"
-
-    # Test set_sticker_keywords. No way to find out the set keywords on a sticker after setting it.
-    async def test_bot_methods_7_png(self, bot, sticker_set):
-        file_id = sticker_set.stickers[-1].file_id
+    # No way to find out the set keywords on a sticker after setting it.
+    async def test_set_sticker_keywords(self, bot, worker_sticker_set):
+        file_id = worker_sticker_set.stickers[-1].file_id
         assert await bot.set_sticker_keywords(file_id, ["test", "test2"])
 
-    async def test_bot_methods_7_tgs(self, bot, animated_sticker_set):
-        file_id = animated_sticker_set.stickers[-1].file_id
-        assert await bot.set_sticker_keywords(file_id, ["test", "test2"])
-
-    async def test_bot_methods_7_webm(self, bot, video_sticker_set):
-        file_id = video_sticker_set.stickers[-1].file_id
-        assert await bot.set_sticker_keywords(file_id, ["test", "test2"])
-
-
-@pytest.fixture(scope="module")
-def mask_position():
-    return MaskPosition(
-        TestMaskPositionBase.point,
-        TestMaskPositionBase.x_shift,
-        TestMaskPositionBase.y_shift,
-        TestMaskPositionBase.scale,
-    )
+    async def test_replace_sticker_in_set(
+        self, bot, worker_sticker_set, sticker_file, sticker_set_name
+    ):
+        file_id = worker_sticker_set.stickers[-1].file_id
+        assert await bot.replace_sticker_in_set(
+            bot.id,
+            sticker_set_name,
+            file_id,
+            sticker=InputSticker(
+                sticker=data_file("telegram.webp").open("rb"),
+                emoji_list=["😄"],
+                format=StickerFormat.STATIC,
+            ),
+        )
 
 
-class TestMaskPositionBase:
+class MaskPositionTestBase:
     point = MaskPosition.EYES
     x_shift = -1
     y_shift = 1
     scale = 2
 
 
-class TestMaskPositionWithoutRequest(TestMaskPositionBase):
+@pytest.fixture(scope="module")
+def mask_position():
+    return MaskPosition(
+        MaskPositionTestBase.point,
+        MaskPositionTestBase.x_shift,
+        MaskPositionTestBase.y_shift,
+        MaskPositionTestBase.scale,
+    )
+
+
+class TestMaskPositionWithoutRequest(MaskPositionTestBase):
     def test_slot_behaviour(self, mask_position):
         inst = mask_position
         for attr in inst.__slots__:
             assert getattr(inst, attr, "err") != "err", f"got extra slot '{attr}'"
         assert len(mro_slots(inst)) == len(set(mro_slots(inst))), "duplicate slot"
 
-    def test_mask_position_de_json(self, bot):
+    def test_mask_position_de_json(self, offline_bot):
         json_dict = {
             "point": self.point,
             "x_shift": self.x_shift,
             "y_shift": self.y_shift,
             "scale": self.scale,
         }
-        mask_position = MaskPosition.de_json(json_dict, bot)
+        mask_position = MaskPosition.de_json(json_dict, offline_bot)
         assert mask_position.api_kwargs == {}
 
         assert mask_position.point == self.point
@@ -1112,8 +1073,7 @@ class TestMaskPositionWithoutRequest(TestMaskPositionBase):
         assert hash(a) != hash(e)
 
 
-@pytest.mark.xfail(reason="API 7.2 incompatibility, see #4181")
-class TestMaskPositionWithRequest(TestMaskPositionBase):
+class TestMaskPositionWithRequest(MaskPositionTestBase):
     async def test_create_new_mask_sticker_set(self, bot, chat_id, sticker_file, mask_position):
         name = f"masks_by_{bot.username}"
         try:
@@ -1132,9 +1092,9 @@ class TestMaskPositionWithRequest(TestMaskPositionBase):
                         emoji_list=["😔"],
                         mask_position=mask_position,
                         keywords=["sad"],
+                        format=StickerFormat.STATIC,
                     )
                 ],
-                sticker_format=StickerFormat.STATIC,
                 sticker_type=Sticker.MASK,
             )
             assert sticker_set

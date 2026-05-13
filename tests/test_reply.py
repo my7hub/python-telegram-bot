@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # A library that provides a Python interface to the Telegram Bot API
-# Copyright (C) 2015-2024
+# Copyright (C) 2015-2026
 # Leandro Toledo de Souza <devs@python-telegram-bot.org>
 #
 # This program is free software: you can redistribute it and/or modify
@@ -24,11 +24,15 @@ import pytest
 from telegram import (
     BotCommand,
     Chat,
+    Checklist,
+    ChecklistTask,
     ExternalReplyInfo,
     Giveaway,
     LinkPreviewOptions,
     MessageEntity,
     MessageOriginUser,
+    PaidMediaInfo,
+    PaidMediaPreview,
     ReplyParameters,
     TextQuote,
     User,
@@ -39,15 +43,17 @@ from tests.auxil.slots import mro_slots
 @pytest.fixture(scope="module")
 def external_reply_info():
     return ExternalReplyInfo(
-        origin=TestExternalReplyInfoBase.origin,
-        chat=TestExternalReplyInfoBase.chat,
-        message_id=TestExternalReplyInfoBase.message_id,
-        link_preview_options=TestExternalReplyInfoBase.link_preview_options,
-        giveaway=TestExternalReplyInfoBase.giveaway,
+        origin=ExternalReplyInfoTestBase.origin,
+        chat=ExternalReplyInfoTestBase.chat,
+        message_id=ExternalReplyInfoTestBase.message_id,
+        link_preview_options=ExternalReplyInfoTestBase.link_preview_options,
+        giveaway=ExternalReplyInfoTestBase.giveaway,
+        paid_media=ExternalReplyInfoTestBase.paid_media,
+        checklist=ExternalReplyInfoTestBase.checklist,
     )
 
 
-class TestExternalReplyInfoBase:
+class ExternalReplyInfoTestBase:
     origin = MessageOriginUser(
         dtm.datetime.now(dtm.timezone.utc).replace(microsecond=0), User(1, "user", False)
     )
@@ -59,26 +65,36 @@ class TestExternalReplyInfoBase:
         dtm.datetime.now(dtm.timezone.utc).replace(microsecond=0),
         1,
     )
+    paid_media = PaidMediaInfo(5, [PaidMediaPreview(10, 10, 10)])
+    checklist = Checklist(
+        title="Checklist Title",
+        tasks=[
+            ChecklistTask(text="Item 1", id=1),
+            ChecklistTask(text="Item 2", id=2),
+        ],
+    )
 
 
-class TestExternalReplyInfoWithoutRequest(TestExternalReplyInfoBase):
+class TestExternalReplyInfoWithoutRequest(ExternalReplyInfoTestBase):
     def test_slot_behaviour(self, external_reply_info):
         for attr in external_reply_info.__slots__:
             assert getattr(external_reply_info, attr, "err") != "err", f"got extra slot '{attr}'"
-        assert len(mro_slots(external_reply_info)) == len(
-            set(mro_slots(external_reply_info))
-        ), "duplicate slot"
+        assert len(mro_slots(external_reply_info)) == len(set(mro_slots(external_reply_info))), (
+            "duplicate slot"
+        )
 
-    def test_de_json(self, bot):
+    def test_de_json(self, offline_bot):
         json_dict = {
             "origin": self.origin.to_dict(),
             "chat": self.chat.to_dict(),
             "message_id": self.message_id,
             "link_preview_options": self.link_preview_options.to_dict(),
             "giveaway": self.giveaway.to_dict(),
+            "paid_media": self.paid_media.to_dict(),
+            "checklist": self.checklist.to_dict(),
         }
 
-        external_reply_info = ExternalReplyInfo.de_json(json_dict, bot)
+        external_reply_info = ExternalReplyInfo.de_json(json_dict, offline_bot)
         assert external_reply_info.api_kwargs == {}
 
         assert external_reply_info.origin == self.origin
@@ -86,8 +102,8 @@ class TestExternalReplyInfoWithoutRequest(TestExternalReplyInfoBase):
         assert external_reply_info.message_id == self.message_id
         assert external_reply_info.link_preview_options == self.link_preview_options
         assert external_reply_info.giveaway == self.giveaway
-
-        assert ExternalReplyInfo.de_json(None, bot) is None
+        assert external_reply_info.paid_media == self.paid_media
+        assert external_reply_info.checklist == self.checklist
 
     def test_to_dict(self, external_reply_info):
         ext_reply_info_dict = external_reply_info.to_dict()
@@ -98,6 +114,8 @@ class TestExternalReplyInfoWithoutRequest(TestExternalReplyInfoBase):
         assert ext_reply_info_dict["message_id"] == self.message_id
         assert ext_reply_info_dict["link_preview_options"] == self.link_preview_options.to_dict()
         assert ext_reply_info_dict["giveaway"] == self.giveaway.to_dict()
+        assert ext_reply_info_dict["paid_media"] == self.paid_media.to_dict()
+        assert ext_reply_info_dict["checklist"] == self.checklist.to_dict()
 
     def test_equality(self, external_reply_info):
         a = external_reply_info
@@ -121,14 +139,14 @@ class TestExternalReplyInfoWithoutRequest(TestExternalReplyInfoBase):
 @pytest.fixture(scope="module")
 def text_quote():
     return TextQuote(
-        text=TestTextQuoteBase.text,
-        position=TestTextQuoteBase.position,
-        entities=TestTextQuoteBase.entities,
-        is_manual=TestTextQuoteBase.is_manual,
+        text=TextQuoteTestBase.text,
+        position=TextQuoteTestBase.position,
+        entities=TextQuoteTestBase.entities,
+        is_manual=TextQuoteTestBase.is_manual,
     )
 
 
-class TestTextQuoteBase:
+class TextQuoteTestBase:
     text = "text"
     position = 1
     entities = [
@@ -138,13 +156,13 @@ class TestTextQuoteBase:
     is_manual = True
 
 
-class TestTextQuoteWithoutRequest(TestTextQuoteBase):
+class TestTextQuoteWithoutRequest(TextQuoteTestBase):
     def test_slot_behaviour(self, text_quote):
         for attr in text_quote.__slots__:
             assert getattr(text_quote, attr, "err") != "err", f"got extra slot '{attr}'"
         assert len(mro_slots(text_quote)) == len(set(mro_slots(text_quote))), "duplicate slot"
 
-    def test_de_json(self, bot):
+    def test_de_json(self, offline_bot):
         json_dict = {
             "text": self.text,
             "position": self.position,
@@ -152,15 +170,13 @@ class TestTextQuoteWithoutRequest(TestTextQuoteBase):
             "is_manual": self.is_manual,
         }
 
-        text_quote = TextQuote.de_json(json_dict, bot)
+        text_quote = TextQuote.de_json(json_dict, offline_bot)
         assert text_quote.api_kwargs == {}
 
         assert text_quote.text == self.text
         assert text_quote.position == self.position
         assert text_quote.entities == tuple(self.entities)
         assert text_quote.is_manual == self.is_manual
-
-        assert TextQuote.de_json(None, bot) is None
 
     def test_to_dict(self, text_quote):
         text_quote_dict = text_quote.to_dict()
@@ -195,17 +211,19 @@ class TestTextQuoteWithoutRequest(TestTextQuoteBase):
 @pytest.fixture(scope="module")
 def reply_parameters():
     return ReplyParameters(
-        message_id=TestReplyParametersBase.message_id,
-        chat_id=TestReplyParametersBase.chat_id,
-        allow_sending_without_reply=TestReplyParametersBase.allow_sending_without_reply,
-        quote=TestReplyParametersBase.quote,
-        quote_parse_mode=TestReplyParametersBase.quote_parse_mode,
-        quote_entities=TestReplyParametersBase.quote_entities,
-        quote_position=TestReplyParametersBase.quote_position,
+        message_id=ReplyParametersTestBase.message_id,
+        chat_id=ReplyParametersTestBase.chat_id,
+        allow_sending_without_reply=ReplyParametersTestBase.allow_sending_without_reply,
+        quote=ReplyParametersTestBase.quote,
+        quote_parse_mode=ReplyParametersTestBase.quote_parse_mode,
+        quote_entities=ReplyParametersTestBase.quote_entities,
+        quote_position=ReplyParametersTestBase.quote_position,
+        checklist_task_id=ReplyParametersTestBase.checklist_task_id,
+        poll_option_id=ReplyParametersTestBase.poll_option_id,
     )
 
 
-class TestReplyParametersBase:
+class ReplyParametersTestBase:
     message_id = 123
     chat_id = 456
     allow_sending_without_reply = True
@@ -216,17 +234,19 @@ class TestReplyParametersBase:
         MessageEntity(MessageEntity.EMAIL, 3, 4),
     ]
     quote_position = 5
+    checklist_task_id = 9
+    poll_option_id = "213"
 
 
-class TestReplyParametersWithoutRequest(TestReplyParametersBase):
+class TestReplyParametersWithoutRequest(ReplyParametersTestBase):
     def test_slot_behaviour(self, reply_parameters):
         for attr in reply_parameters.__slots__:
             assert getattr(reply_parameters, attr, "err") != "err", f"got extra slot '{attr}'"
-        assert len(mro_slots(reply_parameters)) == len(
-            set(mro_slots(reply_parameters))
-        ), "duplicate slot"
+        assert len(mro_slots(reply_parameters)) == len(set(mro_slots(reply_parameters))), (
+            "duplicate slot"
+        )
 
-    def test_de_json(self, bot):
+    def test_de_json(self, offline_bot):
         json_dict = {
             "message_id": self.message_id,
             "chat_id": self.chat_id,
@@ -235,9 +255,11 @@ class TestReplyParametersWithoutRequest(TestReplyParametersBase):
             "quote_parse_mode": self.quote_parse_mode,
             "quote_entities": [entity.to_dict() for entity in self.quote_entities],
             "quote_position": self.quote_position,
+            "checklist_task_id": self.checklist_task_id,
+            "poll_option_id": self.poll_option_id,
         }
 
-        reply_parameters = ReplyParameters.de_json(json_dict, bot)
+        reply_parameters = ReplyParameters.de_json(json_dict, offline_bot)
         assert reply_parameters.api_kwargs == {}
 
         assert reply_parameters.message_id == self.message_id
@@ -247,8 +269,8 @@ class TestReplyParametersWithoutRequest(TestReplyParametersBase):
         assert reply_parameters.quote_parse_mode == self.quote_parse_mode
         assert reply_parameters.quote_entities == tuple(self.quote_entities)
         assert reply_parameters.quote_position == self.quote_position
-
-        assert ReplyParameters.de_json(None, bot) is None
+        assert reply_parameters.checklist_task_id == self.checklist_task_id
+        assert reply_parameters.poll_option_id == self.poll_option_id
 
     def test_to_dict(self, reply_parameters):
         reply_parameters_dict = reply_parameters.to_dict()
@@ -266,6 +288,8 @@ class TestReplyParametersWithoutRequest(TestReplyParametersBase):
             entity.to_dict() for entity in self.quote_entities
         ]
         assert reply_parameters_dict["quote_position"] == self.quote_position
+        assert reply_parameters_dict["checklist_task_id"] == self.checklist_task_id
+        assert reply_parameters_dict["poll_option_id"] == self.poll_option_id
 
     def test_equality(self, reply_parameters):
         a = reply_parameters

@@ -1,3 +1,4 @@
+import os
 import re
 import sys
 from pathlib import Path
@@ -7,12 +8,17 @@ from pathlib import Path
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 from sphinx.application import Sphinx
 
+if sys.version_info < (3, 12):
+    # Due to dependency on chango
+    raise RuntimeError("This documentation needs at least Python 3.12")
+
+
 sys.path.insert(0, str(Path("../..").resolve().absolute()))
 
 # -- General configuration ------------------------------------------------
 # General information about the project.
 project = "python-telegram-bot"
-copyright = "2015-2024, Leandro Toledo"
+copyright = "2015-2026, Leandro Toledo"
 author = "Leandro Toledo"
 
 # The version info for the project you're documenting, acts as replacement for
@@ -20,17 +26,22 @@ author = "Leandro Toledo"
 # built documents.
 #
 # The short X.Y version.
-version = "21.0.1"  # telegram.__version__[:3]
+
+# Import needs to be below the sys.path.insert above
+import telegram  # noqa: E402
+
+version = telegram.__version__
 # The full version, including alpha/beta/rc tags.
-release = "21.0.1"  # telegram.__version__
+release = telegram.__version__
 
 # If your documentation needs a minimal Sphinx version, state it here.
-needs_sphinx = "6.1.3"
+needs_sphinx = "8.1.3"
 
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
 extensions = [
+    "chango.sphinx_ext",
     "sphinx.ext.autodoc",
     "sphinx.ext.napoleon",
     "sphinx.ext.intersphinx",
@@ -40,8 +51,14 @@ extensions = [
     "sphinx_copybutton",
     "sphinx_inline_tabs",
     "sphinxcontrib.mermaid",
-    "sphinx_search.extension",
 ]
+
+# Temporary. See #4387
+if os.environ.get("READTHEDOCS", "") == "True":
+    extensions.append("sphinx_build_compatibility.extension")
+
+# Configuration for the chango sphinx directive
+chango_pyproject_toml_path = Path(__file__).parent.parent.parent
 
 # For shorter links to Wiki in docstrings
 extlinks = {
@@ -67,7 +84,9 @@ source_suffix = ".rst"
 master_doc = "index"
 
 # Global substitutions
-rst_prolog = (Path.cwd() / "../substitutions/global.rst").read_text(encoding="utf-8")
+rst_prolog = ""
+for file in Path.cwd().glob("../substitutions/*.rst"):
+    rst_prolog += "\n" + file.read_text(encoding="utf-8")
 
 # -- Extension settings ------------------------------------------------
 napoleon_use_admonition_for_examples = True
@@ -100,6 +119,17 @@ linkcheck_ignore = [
     # Anchors are apparently inserted by GitHub dynamically, so let's skip checking them
     "https://github.com/python-telegram-bot/python-telegram-bot/tree/master/examples#",
     r"https://github\.com/python-telegram-bot/python-telegram-bot/wiki/[\w\-_,]+\#",
+    # The LGPL license link regularly causes network errors for some reason
+    re.escape("https://www.gnu.org/licenses/lgpl-3.0.html"),
+    # The doc-fixes branch may not always exist - doesn't matter, we only link to it from the
+    # contributing guide
+    re.escape("https://docs.python-telegram-bot.org/en/doc-fixes"),
+    # Apparently has some human-verification check and gives 403 in the sphinx build
+    re.escape("https://stackoverflow.com/questions/tagged/python-telegram-bot"),
+    # Dead Github accounts:
+    re.escape("https://github.com/SmartDever02"),
+    re.escape("https://github.com/renovate[bot]"),
+    re.escape("https://github.com/roast-lord"),
 ]
 linkcheck_allowed_redirects = {
     # Redirects to the default version are okay
@@ -140,12 +170,6 @@ html_theme_options = {
         "admonition-title-font-size": "0.95rem",
         "admonition-font-size": "0.92rem",
     },
-    "announcement": (
-        "PTB has undergone significant changes in v20. Please read the documentation "
-        "carefully and also check out the transition guide in the "
-        '<a href="https://github.com/python-telegram-bot/python-telegram-bot/wiki/'
-        'Transition-guide-to-Version-20.0">wiki</a>.'
-    ),
     "footer_icons": [
         {
             # Telegram channel logo
@@ -251,7 +275,14 @@ htmlhelp_basename = "python-telegram-bot-doc"
 
 # The base URL which points to the root of the HTML documentation. It is used to indicate the
 # location of document using The Canonical Link Relation. Default: ''.
-html_baseurl = "https://docs.python-telegram-bot.org"
+# Set canonical URL from the Read the Docs Domain
+html_baseurl = os.environ.get("READTHEDOCS_CANONICAL_URL", "")
+
+# Tell Jinja2 templates the build is running on Read the Docs
+html_context = {}
+if os.environ.get("READTHEDOCS", "") == "True":
+    html_context["READTHEDOCS"] = True
+
 
 # -- Options for LaTeX output ---------------------------------------------
 

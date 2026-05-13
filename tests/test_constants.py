@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # A library that provides a Python interface to the Telegram Bot API
-# Copyright (C) 2015-2024
+# Copyright (C) 2015-2026
 # Leandro Toledo de Souza <devs@python-telegram-bot.org>
 #
 # This program is free software: you can redistribute it and/or modify
@@ -24,7 +24,7 @@ import re
 import pytest
 
 from telegram import Message, constants
-from telegram._utils.enum import IntEnum, StringEnum
+from telegram._utils.enum import FloatEnum, IntEnum, StringEnum
 from telegram.error import BadRequest
 from tests.auxil.build_messages import make_message
 from tests.auxil.files import data_file
@@ -41,6 +41,11 @@ class IntEnumTest(IntEnum):
     BAR = 2
 
 
+class FloatEnumTest(FloatEnum):
+    FOO = 1.1
+    BAR = 2.1
+
+
 class TestConstantsWithoutRequest:
     """Also test _utils.enum.StringEnum on the fly because tg.constants is currently the only
     place where that class is used."""
@@ -53,13 +58,13 @@ class TestConstantsWithoutRequest:
                 not key.startswith("_")
                 # exclude imported stuff
                 and getattr(member, "__module__", "telegram.constants") == "telegram.constants"
-                and key not in ("sys", "datetime")
+                and key not in ("sys", "dtm", "UTC")
             )
         }
         actual = set(constants.__all__)
-        assert (
-            actual == expected
-        ), f"Members {expected - actual} were not listed in constants.__all__"
+        assert actual == expected, (
+            f"Members {expected - actual} were not listed in constants.__all__"
+        )
 
     def test_message_attachment_type(self):
         assert all(
@@ -69,6 +74,7 @@ class TestConstantsWithoutRequest:
     def test_to_json(self):
         assert json.dumps(StrEnumTest.FOO) == json.dumps("foo")
         assert json.dumps(IntEnumTest.FOO) == json.dumps(1)
+        assert json.dumps(FloatEnumTest.FOO) == json.dumps(1.1)
 
     def test_string_representation(self):
         # test __repr__
@@ -89,6 +95,15 @@ class TestConstantsWithoutRequest:
         assert f"{IntEnumTest.FOO:*^10}" == "****1*****"
         # test __str__
         assert str(IntEnumTest.FOO) == "1"
+
+    def test_float_representation(self):
+        # test __repr__
+        assert repr(FloatEnumTest.FOO) == "<FloatEnumTest.FOO>"
+        # test __format__
+        assert f"{FloatEnumTest.FOO}/0 is undefined!" == "1.1/0 is undefined!"
+        assert f"{FloatEnumTest.FOO:*^10}" == "***1.1****"
+        # test __str__
+        assert str(FloatEnumTest.FOO) == "1.1"
 
     def test_string_inheritance(self):
         assert isinstance(StrEnumTest.FOO, str)
@@ -114,6 +129,18 @@ class TestConstantsWithoutRequest:
         assert object() != IntEnumTest.FOO
 
         assert hash(IntEnumTest.FOO) == hash(1)
+
+    def test_float_inheritance(self):
+        assert isinstance(FloatEnumTest.FOO, float)
+        assert FloatEnumTest.FOO + FloatEnumTest.BAR == 3.2
+
+        assert FloatEnumTest.FOO == FloatEnumTest.FOO
+        assert FloatEnumTest.FOO == 1.1
+        assert FloatEnumTest.FOO != FloatEnumTest.BAR
+        assert FloatEnumTest.FOO != 2.1
+        assert object() != FloatEnumTest.FOO
+
+        assert hash(FloatEnumTest.FOO) == hash(1.1)
 
     def test_bot_api_version_and_info(self):
         assert str(constants.BOT_API_VERSION_INFO) == constants.BOT_API_VERSION
@@ -155,6 +182,7 @@ class TestConstantsWithoutRequest:
             "caption",
             "chat",
             "chat_id",
+            "direct_messages_topic",
             "effective_attachment",
             "entities",
             "from_user",
@@ -170,12 +198,17 @@ class TestConstantsWithoutRequest:
             "reply_markup",
             "reply_to_message",
             "sender_chat",
+            "sender_tag",
             "is_accessible",
             "quote",
             "external_reply",
-            # attribute is deprecated, no need to add it to MessageType
-            "user_shared",
             "via_bot",
+            "is_from_offline",
+            "show_caption_above_media",
+            "paid_star_count",
+            "is_paid_post",
+            "reply_to_checklist_task_id",
+            "reply_to_poll_option_id",
         }
 
     @pytest.mark.parametrize(
@@ -198,9 +231,9 @@ class TestConstantsWithoutRequest:
 
     @pytest.mark.parametrize("member", constants.MessageType)
     def test_message_type_completeness_reverse(self, member):
-        assert self.is_type_attribute(
-            member.value
-        ), f"Additional member {member} in MessageType that should not be a message type"
+        assert self.is_type_attribute(member.value), (
+            f"Additional member {member} in MessageType that should not be a message type"
+        )
 
     @pytest.mark.parametrize("member", constants.MessageAttachmentType)
     def test_message_attachment_type_completeness(self, member):
@@ -216,10 +249,20 @@ class TestConstantsWithoutRequest:
             name = to_snake_case(match.group(1))
             if name == "photo_size":
                 name = "photo"
+            if name == "paid_media_info":
+                name = "paid_media"
             try:
                 constants.MessageAttachmentType(name)
             except ValueError:
                 pytest.fail(f"Missing MessageAttachmentType for {match.group(1)}")
+
+    def test_keyboard_button_style(self):
+        assert constants.KeyboardButtonStyle.PRIMARY == "primary"
+        assert constants.KeyboardButtonStyle.SUCCESS == "success"
+        assert constants.KeyboardButtonStyle.DANGER == "danger"
+        assert constants.KeyboardButtonStyle.BLUE == "primary"
+        assert constants.KeyboardButtonStyle.GREEN == "success"
+        assert constants.KeyboardButtonStyle.RED == "danger"
 
 
 class TestConstantsWithRequest:
@@ -232,6 +275,11 @@ class TestConstantsWithRequest:
             return_exceptions=True,
         )
         good_msg, bad_msg = await tasks
+
+        if isinstance(good_msg, BaseException):
+            # handling xfails
+            raise good_msg
+
         assert good_msg.text == good_text
         assert isinstance(bad_msg, BadRequest)
         assert "Message is too long" in str(bad_msg)
@@ -245,6 +293,11 @@ class TestConstantsWithRequest:
             return_exceptions=True,
         )
         good_msg, bad_msg = await tasks
+
+        if isinstance(good_msg, BaseException):
+            # handling xfails
+            raise good_msg
+
         assert good_msg.caption == good_caption
         assert isinstance(bad_msg, BadRequest)
         assert "Message caption is too long" in str(bad_msg)

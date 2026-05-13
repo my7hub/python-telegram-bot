@@ -12,7 +12,6 @@ bot.
 
 import logging
 from collections import defaultdict
-from typing import DefaultDict, Optional, Set
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
@@ -40,7 +39,7 @@ class ChatData:
     """Custom class for chat_data. Here we store data per message."""
 
     def __init__(self) -> None:
-        self.clicks_per_message: DefaultDict[int, int] = defaultdict(int)
+        self.clicks_per_message: defaultdict[int, int] = defaultdict(int)
 
 
 # The [ExtBot, dict, ChatData, dict] is for type checkers like mypy
@@ -50,19 +49,19 @@ class CustomContext(CallbackContext[ExtBot, dict, ChatData, dict]):
     def __init__(
         self,
         application: Application,
-        chat_id: Optional[int] = None,
-        user_id: Optional[int] = None,
+        chat_id: int | None = None,
+        user_id: int | None = None,
     ):
         super().__init__(application=application, chat_id=chat_id, user_id=user_id)
-        self._message_id: Optional[int] = None
+        self._message_id: int | None = None
 
     @property
-    def bot_user_ids(self) -> Set[int]:
+    def bot_user_ids(self) -> set[int]:
         """Custom shortcut to access a value stored in the bot_data dict"""
         return self.bot_data.setdefault("user_ids", set())
 
     @property
-    def message_clicks(self) -> Optional[int]:
+    def message_clicks(self) -> int | None:
         """Access the number of clicks for the message this context object was built for."""
         if self._message_id:
             return self.chat_data.clicks_per_message[self._message_id]

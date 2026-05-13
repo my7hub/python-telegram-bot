@@ -1,6 +1,6 @@
 #
 #  A library that provides a Python interface to the Telegram Bot API
-#  Copyright (C) 2015-2024
+#  Copyright (C) 2015-2026
 #  Leandro Toledo de Souza <devs@python-telegram-bot.org>
 #
 #  This program is free software: you can redistribute it and/or modify
@@ -16,7 +16,6 @@
 #  You should have received a copy of the GNU Lesser Public License
 #  along with this program.  If not, see [http://www.gnu.org/licenses/].
 import inspect
-from typing import List
 
 keyword_args = [
     "Keyword Arguments:",
@@ -48,29 +47,29 @@ keyword_args = [
     "",
 ]
 
-media_write_timeout_deprecation_methods = [
-    "send_photo",
+media_write_timeout_change_methods = [
+    "add_sticker_to_set",
+    "create_new_sticker_set",
+    "send_animation",
     "send_audio",
     "send_document",
+    "send_media_group",
+    "send_photo",
     "send_sticker",
     "send_video",
     "send_video_note",
-    "send_animation",
     "send_voice",
-    "send_media_group",
     "set_chat_photo",
     "upload_sticker_file",
-    "add_sticker_to_set",
-    "create_new_sticker_set",
 ]
-media_write_timeout_deprecation = [
+media_write_timeout_change = [
     "    write_timeout (:obj:`float` | :obj:`None`, optional): Value to pass to "
     "        :paramref:`telegram.request.BaseRequest.post.write_timeout`. By default, ``20`` "
     "        seconds are used as write timeout."
     "",
     "",
-    "       .. deprecated:: 20.7",
-    "           In future versions, the default value will be changed to "
+    "       .. versionchanged:: 22.0",
+    "           The default value changed to "
     "           :attr:`~telegram.request.BaseRequest.DEFAULT_NONE`.",
     "",
     "",
@@ -85,7 +84,7 @@ get_updates_read_timeout_addition = [
 ]
 
 
-def find_insert_pos_for_kwargs(lines: List[str]) -> int:
+def find_insert_pos_for_kwargs(lines: list[str]) -> int:
     """Finds the correct position to insert the keyword arguments and returns the index."""
     for idx, value in reversed(list(enumerate(lines))):  # reversed since :returns: is at the end
         if value.startswith("Returns"):

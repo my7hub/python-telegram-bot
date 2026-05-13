@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # A library that provides a Python interface to the Telegram Bot API
-# Copyright (C) 2015-2024
+# Copyright (C) 2015-2026
 # Leandro Toledo de Souza <devs@python-telegram-bot.org>
 #
 # This program is free software: you can redistribute it and/or modify
@@ -18,8 +18,9 @@
 # along with this program.  If not, see [http://www.gnu.org/licenses/].
 """This module contains exceptions to our API compared to the official API."""
 
+from collections.abc import Sequence
 
-from telegram import Animation, Audio, Document, PhotoSize, Sticker, Video, VideoNote, Voice
+from telegram import Animation, Audio, Document, Gift, PhotoSize, Sticker, Video, VideoNote, Voice
 from tests.test_official.helpers import _get_params_base
 
 IGNORED_OBJECTS = ("ResponseParameters",)
@@ -36,44 +37,81 @@ GLOBALLY_IGNORED_PARAMETERS = {
 
 class ParamTypeCheckingExceptions:
     # Types for certain parameters accepted by PTB but not in the official API
+    # structure: method/class_name/regex: {param_name/regex: type}
     ADDITIONAL_TYPES = {
-        "photo": PhotoSize,
-        "video": Video,
-        "video_note": VideoNote,
-        "audio": Audio,
-        "document": Document,
-        "animation": Animation,
-        "voice": Voice,
-        "sticker": Sticker,
+        r"send_\w*": {
+            "photo$": PhotoSize,
+            "video$": Video,
+            "video_note": VideoNote,
+            "audio": Audio,
+            "document": Document,
+            "animation": Animation,
+            "voice": Voice,
+            "sticker": Sticker,
+            "gift_id": Gift,
+        },
+        "(delete|set)_sticker.*": {
+            "sticker$": Sticker,
+        },
+        "replace_sticker_in_set": {
+            "old_sticker$": Sticker,
+        },
     }
 
+    # TODO: Look into merging this with COMPLEX_TYPES
     # Exceptions to the "Array of" types, where we accept more types than the official API
-    # key: parameter name, value: type which must be present in the annotation
+    # key: (parameter name, is_class), value: type which must be present in the annotation
     ARRAY_OF_EXCEPTIONS = {
-        "results": "InlineQueryResult",  # + Callable
-        "commands": "BotCommand",  # + tuple[str, str]
-        "keyboard": "KeyboardButton",  # + sequence[sequence[str]]
-        "reaction": "ReactionType",  # + str
-        # TODO: Deprecated and will be corrected (and removed) in next major PTB version:
-        "file_hashes": "List[str]",
+        ("results", False): "InlineQueryResult",  # + Callable
+        ("commands", False): "BotCommand",  # + tuple[str, str]
+        ("keyboard", True): "KeyboardButton",  # + sequence[sequence[str]]
+        ("reaction", False): "ReactionType",  # + str
+        ("options", False): "InputPollOption",  # + str
     }
 
     # Special cases for other parameters that accept more types than the official API, and are
-    # too complex to compare/predict with official API:
-    COMPLEX_TYPES = (
-        {  # (param_name, is_class (i.e appears in a class?)): reduced form of annotation
-            ("correct_option_id", False): int,  # actual: Literal
-            ("file_id", False): str,  # actual: Union[str, objs_with_file_id_attr]
-            ("invite_link", False): str,  # actual: Union[str, ChatInviteLink]
-            ("provider_data", False): str,  # actual: Union[str, obj]
-            ("callback_data", True): str,  # actual: Union[str, obj]
-            ("media", True): str,  # actual: Union[str, InputMedia*, FileInput]
-            (
-                "data",
-                True,
-            ): str,  # actual: Union[IdDocumentData, PersonalDetails, ResidentialAddress]
-        }
-    )
+    # too complex to compare/predict with official API
+    # structure: class/method_name: {param_name: reduced form of annotation}
+    COMPLEX_TYPES = {
+        "send_poll": {
+            # "correct_option_id": int,
+            "correct_option_ids": Sequence[int]
+        },
+        "get_file": {
+            "file_id": str,  # actual: Union[str, objs_with_file_id_attr]
+        },
+        r"\w+invite_link": {
+            "invite_link": str,  # actual: Union[str, ChatInviteLink]
+        },
+        "send_invoice|create_invoice_link": {
+            "provider_data": str,  # actual: Union[str, obj]
+        },
+        "InlineKeyboardButton": {
+            "callback_data": str,  # actual: Union[str, obj]
+        },
+        "Input(Paid)?Media.*": {
+            "media": str,  # actual: Union[str, InputMedia*, FileInput]
+            # see also https://github.com/tdlib/telegram-bot-api/issues/707
+            "thumbnail": str,  # actual: Union[str, FileInput]
+            "cover": str,  # actual: Union[str, FileInput]
+        },
+        "InputProfilePhotoStatic": {
+            "photo": str,  # actual: Union[str, FileInput]
+        },
+        "InputProfilePhotoAnimated": {
+            "animation": str,  # actual: Union[str, FileInput]
+        },
+        "InputSticker": {
+            "sticker": str,  # actual: Union[str, FileInput]
+        },
+        "InputStoryContent.*": {
+            "photo": str,  # actual: Union[str, FileInput]
+            "video": str,  # actual: Union[str, FileInput]
+        },
+        "EncryptedPassportElement": {
+            "data": str,  # actual: Union[IdDocumentData, PersonalDetails, ResidentialAddress]
+        },
+    }
 
     # param names ignored in the param type checking in classes for the `tg.Defaults` case.
     IGNORED_DEFAULTS_PARAM_NAMES = {
@@ -83,11 +121,6 @@ class ParamTypeCheckingExceptions:
 
     # These classes' params are all ODVInput, so we ignore them in the defaults type checking.
     IGNORED_DEFAULTS_CLASSES = {"LinkPreviewOptions"}
-
-    # TODO: Remove this in v22 when it becomes a datetime (also remove from arg_type_checker.py)
-    DATETIME_EXCEPTIONS = {
-        "file_date",
-    }
 
 
 # Arguments *added* to the official API
@@ -115,12 +148,22 @@ PTB_EXTRA_PARAMS = {
     "PassportElementError": {"source", "type", "message"},
     "InputMedia": {"caption", "caption_entities", "media", "media_type", "parse_mode"},
     "InputMedia(Animation|Audio|Document|Photo|Video|VideoNote|Voice)": {"filename"},
-    "InputFile": {"attach", "filename", "obj"},
+    "InputFile": {"attach", "filename", "obj", "read_file_handle"},
     "MaybeInaccessibleMessage": {"date", "message_id", "chat"},  # attributes common to all subcls
     "ChatBoostSource": {"source"},  # attributes common to all subclasses
     "MessageOrigin": {"type", "date"},  # attributes common to all subclasses
     "ReactionType": {"type"},  # attributes common to all subclasses
+    "BackgroundType": {"type"},  # attributes common to all subclasses
+    "BackgroundFill": {"type"},  # attributes common to all subclasses
+    "OwnedGift": {"type"},  # attributes common to all subclasses
     "InputTextMessageContent": {"disable_web_page_preview"},  # convenience arg, here for bw compat
+    "RevenueWithdrawalState": {"type"},  # attributes common to all subclasses
+    "TransactionPartner": {"type"},  # attributes common to all subclasses
+    "PaidMedia": {"type"},  # attributes common to all subclasses
+    "InputPaidMedia": {"type", "media"},  # attributes common to all subclasses
+    "InputStoryContent": {"type"},  # attributes common to all subclasses
+    "StoryAreaType": {"type"},  # attributes common to all subclasses
+    "InputProfilePhoto": {"type"},  # attributes common to all subclasses
 }
 
 
@@ -143,6 +186,16 @@ PTB_IGNORED_PARAMS = {
     r"MessageOrigin\w+": {"type"},
     r"ChatBoostSource\w+": {"source"},
     r"ReactionType\w+": {"type"},
+    r"BackgroundType\w+": {"type"},
+    r"BackgroundFill\w+": {"type"},
+    r"RevenueWithdrawalState\w+": {"type"},
+    r"TransactionPartner\w+": {"type"},
+    r"PaidMedia\w+": {"type"},
+    r"InputPaidMedia\w+": {"type"},
+    r"InputProfilePhoto\w+": {"type"},
+    r"OwnedGift\w+": {"type"},
+    r"InputStoryContent\w+": {"type"},
+    r"StoryAreaType\w+": {"type"},
 }
 
 
@@ -166,7 +219,11 @@ def ignored_param_requirements(object_name: str) -> set[str]:
 
 
 # Arguments that are optional arguments for now for backwards compatibility
-BACKWARDS_COMPAT_KWARGS: dict[str, set[str]] = {}
+BACKWARDS_COMPAT_KWARGS: dict[str, set[str]] = {
+    "PollOption": {"persistent_id"},
+    "PollAnswer": {"option_persistent_ids"},
+    "Poll": {"allows_revoting"},
+}
 
 
 def backwards_compat_kwargs(object_name: str) -> set[str]:
